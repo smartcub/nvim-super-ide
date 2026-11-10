@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="560" alt="Neovim Super IDE">
+</p>
+
 # Neovim Super IDE
 
 **One file**, `init.lua`, that turns Neovim into a keyboard-first IDE — and
@@ -30,6 +34,7 @@ installs, updates, moves and removes itself, on Linux, macOS and Windows alike.
 | `install.ps1` | The same for Windows 10 / 11 |
 | `README.md` | This guide |
 | `LICENSE` | MIT license (§14) |
+| `assets/` | `logo.svg` (the start screen as the project logo) and `gen_logo.py`, which generates it |
 
 Keep the scripts next to `init.lua`: they install the one beside them.
 
