@@ -4029,7 +4029,9 @@ local function choose_updates(items)
     local lines = vim.list_extend({}, head)
     for i, it in ipairs(items) do
       local note = it.kind == "plugin" and needed_by[it.name] and ("   (needed by " .. needed_by[it.name] .. ")") or ""
-      lines[#lines + 1] = ("%s %-" .. namew .. "s   %s%s"):format(on[i] and "[x]" or "[ ]", it.name, it.detail, note)
+      -- ✓ rather than √: √ is "ambiguous width" in Unicode, drawn two cells
+      -- wide by many CJK terminals while Neovim counts one.
+      lines[#lines + 1] = ("%s %-" .. namew .. "s   %s%s"):format(on[i] and "[✓]" or "[ ]", it.name, it.detail, note)
     end
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -4062,7 +4064,18 @@ local function choose_updates(items)
   -- one highlighted.
   vim.wo[win].number, vim.wo[win].relativenumber = false, false
   vim.wo[win].wrap, vim.wo[win].cursorline = false, true
-  vim.api.nvim_win_set_cursor(win, { #head + 1, 0 })
+  -- The cursor stays inside the brackets of an item line: column 1 (0-based)
+  -- of the lines below the header. Any move (j/k, gg/G, a mouse click) is
+  -- put back there.
+  vim.api.nvim_win_set_cursor(win, { #head + 1, 1 })
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = buf,
+    callback = function()
+      local row = vim.api.nvim_win_get_cursor(0)[1]
+      row = math.max(#head + 1, math.min(row, #head + #items))
+      vim.api.nvim_win_set_cursor(0, { row, 1 })
+    end,
+  })
   local o = { buffer = buf, nowait = true }
   map("n", "<Space>", toggle, o)
   map("n", "a", function() set_all(true) end, o)
@@ -4105,6 +4118,11 @@ vim.api.nvim_create_user_command("IDEUpdate", function(cmd)
   busy("update", true)
   local ok, err = pcall(check_updates, function(items, problems)
     busy("update", false)
+    -- The check is over: clear its "Checking for updates …" line. A message
+    -- stays on the command line until another replaces it, and the checklist
+    -- window does not. Scheduled, so it runs after notify's own scheduled
+    -- output; warnings below are scheduled later still, so they stay visible.
+    vim.schedule(function() vim.cmd.echo('""') end)
     if #problems > 0 then notify("Some checks failed: " .. table.concat(problems, "; "), vim.log.levels.WARN) end
     if #items == 0 then return notify("Everything is up to date.") end
     if arg == "--all" then return apply_updates(items, "all") end
