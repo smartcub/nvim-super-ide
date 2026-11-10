@@ -11,6 +11,7 @@ machine; each approved state is kept as a *generation* you can return to or
 move elsewhere. Your previous Neovim setup is set aside, not deleted, and
 uninstalling restores it.
 
+<a id="quick-links"></a>
 <p align="center">
   <a href="#online-install">Online install</a> ·
   <a href="#local-install">Local install</a> ·
@@ -44,6 +45,8 @@ nvim            # then  :IDEDoctor
 
 ### Online install
 
+<p align="right"><a href="#quick-links">↑ Back to links</a></p>
+
 No files needed; the script downloads `init.lua` and both scripts to a temporary
 directory and installs from there.
 
@@ -61,6 +64,8 @@ Then **open a new terminal** and run `nvim`; `:IDEDoctor` reports what is
 installed and what is missing.
 
 ### Local install
+
+<p align="right"><a href="#quick-links">↑ Back to links</a></p>
 
 From a folder holding the repository files (an export, a download, a clone);
 the scripts install the `init.lua` beside them.
@@ -207,6 +212,8 @@ restores the previous generation, which may take a few minutes.
 
 ## Uninstall
 
+<p align="right"><a href="#quick-links">↑ Back to links</a></p>
+
 ```vim
 :IDEUninstall          " asks keep-or-delete; finishes after Neovim exits
 ```
@@ -245,6 +252,8 @@ uninstall (delete) leaves the home directory identical to before.
 ---
 
 ## Generations
+
+<p align="right"><a href="#quick-links">↑ Back to links</a></p>
 
 A **generation** is a complete `init.lua`: code plus a `LOCK` naming the Neovim
 version, plugin commits, tool versions and languages. Every approved state is
@@ -302,6 +311,8 @@ present). Either way the target gets the same Neovim, plugins and tools.
 ---
 
 ## Keymaps
+
+<p align="right"><a href="#quick-links">↑ Back to links</a></p>
 
 **Leader:** `,`
 
@@ -398,6 +409,8 @@ dragging to use the terminal's own selection.
 ---
 
 ## Commands
+
+<p align="right"><a href="#quick-links">↑ Back to links</a></p>
 
 | Command | Purpose |
 |:--|:--|
