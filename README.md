@@ -35,8 +35,8 @@ nvim            # then  :IDEDoctor
 
 - **Use it**: `nvim file.c`. Language servers, formatters and debuggers download
   the first time you open a file of that language. Leader is `,`.
-- **Update**: `:IDEUpdate`, restart, try it, then `:IDEPin` to keep it or
-  `:IDERollback` to drop it.
+- **Update**: `:IDEUpdate --all`, restart, try it, then `:IDEPin` to keep it
+  or `:IDERollback` to drop it. Without `--all` you choose what to update.
 - **Remove**: `:IDEUninstall`.
 
 ---
@@ -261,10 +261,10 @@ stored as one, in `~/.local/share/nvim/super-ide/generations/`, named by date
 and Neovim version. The workflow:
 
 ```
-:IDEUpdate  →  restart, try it  →  :IDEPin       keep it as a new generation
-                                 →  :IDERollback  drop it, back to the generation in effect
-:IDESwitch <generation>                           go to any stored generation
-:IDEExport [dir] [--history]                      take the generation in effect to another machine
+:IDEUpdate [--all]  →  restart, try it, :IDEDiff  →  :IDEPin       keep it as a new generation
+                                                  →  :IDERollback  drop it, back to the generation in effect
+:IDESwitch <generation>                                   go to any stored generation
+:IDEExport [dir] [--history]                              take the generation in effect to another machine
 ```
 
 | State | Meaning | Reached by |
@@ -275,12 +275,19 @@ and Neovim version. The workflow:
 
 | Command | What it does |
 |:--|:--|
-| `:IDEUpdate` | Make a **candidate**: the newest Neovim, plugins and tools. The new Neovim is unpacked next to the current one; restart to try it |
+| `:IDEUpdate` | Check what is newer (Neovim, each plugin, each tool), then choose in a checklist which of them make the **candidate**. Nothing is ticked at first; ticking a plugin also ticks the plugins it depends on |
+| `:IDEUpdate --all` | Make a candidate of everything newer, without asking |
 | `:IDEUpdate v0.12.5` | Change **only Neovim** to that release (Tab completes the releases ≥ 0.12); plugins and tools stay as pinned. Crossing a minor version asks first |
+| `:IDEDiff` | Show what the live state changes against the generation in effect: Neovim release, each plugin's commits (with their subjects), tool versions, new languages, edits to `init.lua` |
 | `:IDEPin` | Approve the live state: write it into the `LOCK` of `init.lua`, store the file as a new generation, remove the Neovim builds no longer used |
 | `:IDERollback` | Drop the candidate or the unpinned changes; return to the generation in effect. An edited `init.lua` is first set aside in `super-ide/rejected/` |
 | `:IDESwitch <generation>` | Go to any stored generation (Tab lists them, newest first): its Neovim, its `init.lua`, its plugins, tools and parsers |
 | `:IDEExport [dir] [--history]` | Write the generation in effect to `dir/init.lua` (with `--history`, every stored generation too) |
+
+In the checklist: `Space` ticks the item under the cursor, `a` ticks all, `n`
+none, `Enter` updates the ticked items, `q` cancels. A new Neovim is unpacked
+next to the current one; restart to run it. Tree-sitter parsers are updated
+together with `nvim-treesitter`, whose version decides theirs.
 
 `:IDEDoctor` shows the state and why, the generation in effect, and recent
 history (`records/history.tsv`).
@@ -417,7 +424,8 @@ dragging to use the terminal's own selection.
 | `:IDEDoctor` | Generation state and history; what is installed, where it came from (system / Mason / sandbox), and what is missing — with the command to fix it |
 | `:IDEInstall [lang… \| all]` | Provision languages now (no argument: the current buffer's language) |
 | `:IDEPrewarm [dir]` | Scan a directory and provision every language found in it |
-| `:IDEUpdate [vX.Y.Z]` | Try newer Neovim, plugins and tools as a candidate — or only another Neovim ([Generations](#generations)) |
+| `:IDEUpdate [--all \| vX.Y.Z]` | Try newer Neovim, plugins and tools as a candidate: chosen in a checklist, all of them, or only another Neovim ([Generations](#generations)) |
+| `:IDEDiff` | What the live state changes against the generation in effect |
 | `:IDEPin` | Record the live state as a new generation |
 | `:IDERollback` | Return to the generation in effect |
 | `:IDESwitch <generation>` | Switch to a stored generation |
