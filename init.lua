@@ -3121,6 +3121,7 @@ local plugins = {
     opts = {
       spec = {
         { "<leader>c", group = "code / guides" }, { "<leader>d", group = "debug" },
+        { "<leader>h", group = "git changes" },
         { "<leader>f", group = "find / format" }, { "<leader>i", group = "indent" },
         { "<leader>n", group = "neogen docs" }, { "<leader>q", group = "session" },
         { "<leader>r", group = "rename / grep" }, { "<leader>t", group = "toggle" },
@@ -3386,7 +3387,47 @@ local plugins = {
     opts = { open_mapping = [[<C-\>]], direction = "float", start_in_insert = true, shade_terminals = true },
   },
   { "tpope/vim-fugitive", cmd = { "Git", "G", "Gdiffsplit", "Gvdiffsplit", "Gread", "Gwrite", "Gblame" } },
-  { "lewis6991/gitsigns.nvim", event = { "BufReadPre", "BufNewFile" }, opts = {} },
+  {
+    -- The sign column marks lines changed since the last commit (more exactly,
+    -- against git's index): green ┃ added, blue ┃ changed, _ deleted below.
+    -- <leader>hB compares with the remote branch instead, i.e. since the last
+    -- push (or fetch).
+    "lewis6991/gitsigns.nvim", event = { "BufReadPre", "BufNewFile" },
+    opts = function()
+      local upstream = false   -- comparing with @{upstream} (all buffers)
+      local function toggle_base()
+        local gs = require("gitsigns")
+        if upstream then
+          gs.reset_base(true)   -- true: every buffer, and those opened later
+          upstream = false
+          return notify("Git changes: since the last commit")
+        end
+        -- A branch never pushed has no upstream; change_base would raise.
+        local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0))
+        local r = vim.system({ "git", "-C", dir, "rev-parse", "--abbrev-ref", "@{upstream}" }, { text = true }):wait()
+        if r.code ~= 0 then
+          return notify("This branch has no remote branch yet (git push -u sets one).", vim.log.levels.WARN)
+        end
+        gs.change_base("@{upstream}", true)
+        upstream = true
+        notify("Git changes: since the last push (" .. vim.trim(r.stdout) .. ")")
+      end
+      return {
+        -- Runs for each buffer gitsigns manages (a file tracked by git), so
+        -- these keys exist only there.
+        on_attach = function(buf)
+          local gs = require("gitsigns")
+          local function o(desc) return { buffer = buf, desc = desc } end
+          map("n", "]h", function() gs.nav_hunk("next") end, o("Next git change"))
+          map("n", "[h", function() gs.nav_hunk("prev") end, o("Previous git change"))
+          map("n", "<leader>hp", gs.preview_hunk, o("Preview this git change"))
+          map("n", "<leader>hr", gs.reset_hunk, o("Undo this git change (u restores it)"))
+          map("n", "<leader>hb", function() gs.blame_line({ full = true }) end, o("Who changed this line, in which commit"))
+          map("n", "<leader>hB", toggle_base, o("Git changes: since last commit / since last push"))
+        end,
+      }
+    end,
+  },
   {
     "folke/persistence.nvim", event = "BufReadPre", opts = {},
     keys = {

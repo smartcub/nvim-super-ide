@@ -341,6 +341,7 @@ present). Either way the target gets the same Neovim, plugins and tools.
 | `<F7>` | Run project (Cargo, Go module, CMake, Make, npm, Maven or Gradle; else the file) |
 | `<F9>` | Toggle breakpoint |
 | `<F10>` / `<F11>` / `<F12>` | Step over / into / out |
+| `]h` / `[h` | Next / previous git change (in files tracked by git) |
 | `,,<Space>` | Clear search highlight |
 | `,,ev` | Edit `init.lua` |
 | `,cg` | Toggle column guides (80/100/120) |
@@ -354,6 +355,10 @@ present). Either way the target gets the same Neovim, plugins and tools.
 | `,ff` | Find files |
 | `,fh` | Help tags |
 | `,fo` | Recent files |
+| `,hp` | Preview this git change (old and new lines) |
+| `,hr` | Undo this git change (`u` brings it back) |
+| `,hb` | Who changed this line, in which commit |
+| `,hB` | Mark changes since the last push instead of the last commit (again: back) |
 | `,ig` | Toggle indent guides |
 | `,nf` | Generate a file header comment (neogen) |
 | `,ng` | Generate a doc comment for the symbol under the cursor (neogen) |
@@ -396,6 +401,37 @@ Insert mode).
 | Insert | `<C-k>` | Toggle signature help |
 | Insert | `filehdr` | Snippet: file header for C, C++ and assembly |
 | Terminal | `<Esc>` | Back to Normal mode (inside the fuzzy finder, `<Esc>` closes it) |
+
+The sign column marks lines changed since the last commit: green `┃` added,
+blue `┃` changed, `_` lines deleted below. It follows your typing, before any
+save. After `,hB` it marks everything not yet pushed, committed or not.
+
+### More keys
+
+Defaults of Neovim and the plugins, unchanged by Super IDE but worth knowing.
+Oil, the file tree, `:Git` and which-key list all of theirs with `g?` or `?`.
+
+| Where | Key | Action |
+|:--|:--|:--|
+| Diff mode (`nvim -d a b`) | `]c` / `[c` | Next / previous difference |
+| | `do` / `dp` | Take this difference from / put it into the other window |
+| | `:diffupdate` | Compare again after edits |
+| Folds | `za` / `zR` / `zM` | Toggle this fold / open all / close all |
+| Comments | `gcc` / `gc{motion}` | Comment or uncomment a line / a range (Visual: `gc`) |
+| Surround | `ysiw"` | Surround the word with `"` |
+| | `cs"'` / `ds"` | Change `"` to `'` / delete the surrounding `"` |
+| | Visual `S"` | Surround the selection with `"` |
+| Lists | `[q` / `]q` | Previous / next quickfix item (e.g. grep results) |
+| | `[b` / `]b` | Previous / next buffer |
+| Links | `gx` | Open the link under the cursor in the browser |
+| Finder (`,ff`, `,rg`, …) | `<C-v>` / `<C-s>` / `<C-t>` | Open in a vertical split / horizontal split / tab |
+| `:Git` status window | `s` / `u` | Stage / unstage the file under the cursor |
+| | `=` / `dv` | Show the changes inline / side by side |
+| | `cc` | Commit |
+| Oil (`-`) | `Enter` / `-` | Open / go to the parent directory |
+| | Rename or delete lines, then `:w` | Rename or delete the files |
+| File tree (`,e`) | `a` / `d` / `r` | New / delete / rename |
+| Anywhere | `,` then wait | which-key lists every `,` key |
 
 ### Start screen
 
