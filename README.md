@@ -76,6 +76,7 @@ the scripts install the `init.lua` beside them.
 | `install.sh` | Setup for Linux and macOS: system packages, pinned Neovim, then `init.lua install` |
 | `install.ps1` | The same for Windows 10 / 11 |
 | `assets/` | `logo.svg` and `gen_logo.py`, which generates it |
+| `.editorconfig` | Indentation and line endings for contributors' editors |
 
 | System | Command |
 |:--|:--|
@@ -522,6 +523,26 @@ zig = {
 Open a Zig file, then `:IDEPin` to record the language and its tool versions in
 the `LOCK`.
 
+### Formatting on save
+
+Saving formats a file only in a style its project has adopted, so an edit in
+someone else's project never turns into a diff of every line:
+
+| Formatter | Runs on save |
+|:--|:--|
+| gofmt / goimports, rustfmt | Always (one style per language) |
+| stylua | With `.stylua.toml` or `stylua.toml` |
+| clang-format | With `.clang-format` or `_clang-format` |
+| prettier | With a Prettier config file, or a `"prettier"` key in `package.json` |
+| ruff | With `ruff.toml`, `.ruff.toml`, or `[tool.ruff]` in `pyproject.toml` |
+| taplo, php-cs-fixer, sql-formatter | With `taplo.toml`, `.php-cs-fixer(.dist).php`, `.sql-formatter.json` |
+| shfmt | Never (it has no config file of its own) |
+| Language server (Java) | With `.settings/org.eclipse.jdt.core.prefs` |
+
+The config file is looked for in the file's folder and every folder above it.
+The formatter then follows that file, not the editor's indentation settings.
+`,f` formats the current file by hand at any time, with or without a config.
+
 ---
 
 ## Plugins
@@ -567,7 +588,7 @@ The `SETTINGS` table near the top of `init.lua`:
 | Setting | Default | Meaning |
 |:--|:--|:--|
 | `leader` | `","` | Leader key |
-| `format_on_save` | `true` | Initial state; toggle at runtime with `,tf` |
+| `format_on_save` | `true` | Initial state; toggle at runtime with `,tf`. Applies only where the project has adopted the formatter ([Formatting on save](#formatting-on-save)) |
 | `debug` | `true` | Include debugging; adapters still download only on first `<F5>` |
 | `auto_install` | `true` | Fetch tooling on first sight of a language |
 | `python_provider` | `false` | Enable only for legacy remote plugins that need pynvim |

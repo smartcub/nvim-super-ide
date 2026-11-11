@@ -3272,12 +3272,92 @@ local plugins = {
           by_ft[ft] = entry
         end
       end
-      vim.g.format_on_save = SETTINGS.format_on_save
+      -- The default, unless the switch was already set: conform loads on the
+      -- first write, which must not undo an earlier <leader>tf or a setting
+      -- from elsewhere.
+      if vim.g.format_on_save == nil then vim.g.format_on_save = SETTINGS.format_on_save end
+
+      -- Format on save only in a style the project has adopted. A formatter
+      -- with no config rewrites the whole file in its own default style (tabs,
+      -- line breaks), so one saved edit in a project that never used it turns
+      -- into a diff of every line. On save, a formatter therefore runs only
+      -- when its own config file is found from the file's folder upward:
+      --   true      always: the language has one style (gofmt, rustfmt)
+      --   { … }     names: config file names; probe: name -> check of a
+      --             shared file (pyproject.toml, package.json) for the tool's
+      --             section; paths: files at a fixed place in a project folder
+      --   absent    never on save (shfmt: .editorconfig alone proves nothing)
+      -- Language servers format on save only where `lsp` says so (Java with
+      -- Eclipse formatter settings). <leader>f formats by hand without limits.
+      local function has_key(json_key)
+        return function(path)
+          local ok, data = pcall(vim.json.decode, LC.read_file(path) or "")
+          return ok and type(data) == "table" and data[json_key] ~= nil
+        end
+      end
+      local function has_section(section)
+        return function(path) return (LC.read_file(path) or ""):find(section, 1, true) ~= nil end
+      end
+      local RUFF = { names = { "ruff.toml", ".ruff.toml" }, probe = { ["pyproject.toml"] = has_section("[tool.ruff") } }
+      local ON_SAVE = {
+        gofmt = true, goimports = true, rustfmt = true,
+        stylua = { names = { ".stylua.toml", "stylua.toml" } },
+        clang_format = { names = { ".clang-format", "_clang-format" } },
+        prettier = {
+          names = { ".prettierrc", ".prettierrc.json", ".prettierrc.yml", ".prettierrc.yaml", ".prettierrc.json5",
+            ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs", ".prettierrc.ts", ".prettierrc.cts",
+            ".prettierrc.mts", ".prettierrc.toml", "prettier.config.js", "prettier.config.cjs",
+            "prettier.config.mjs", "prettier.config.ts", "prettier.config.cts", "prettier.config.mts" },
+          probe = { ["package.json"] = has_key("prettier") },
+        },
+        ruff_fix = RUFF, ruff_format = RUFF,
+        taplo = { names = { "taplo.toml", ".taplo.toml" } },
+        php_cs_fixer = { names = { ".php-cs-fixer.php", ".php-cs-fixer.dist.php" } },
+        sql_formatter = { names = { ".sql-formatter.json" } },
+        lsp = { java = { paths = { ".settings/org.eclipse.jdt.core.prefs" } } },
+      }
+      -- Does the folder `dir`, or one above it, hold a file that `rule` accepts?
+      local function adopted(rule, dir)
+        if rule == true then return true end
+        if type(rule) ~= "table" or not dir then return false end
+        if rule.paths then
+          -- vim.fs.parents(dir) yields the folders above dir, nearest first.
+          for _, d in ipairs(vim.list_extend({ dir }, vim.iter(vim.fs.parents(dir)):totable())) do
+            for _, rel in ipairs(rule.paths) do
+              if LC.lexists(joinpath(d, rel)) then return true end
+            end
+          end
+        end
+        if not (rule.names or rule.probe) then return false end
+        -- vim.fs.find with a function tests every file of each folder upward;
+        -- limit = 1 stops at the first match.
+        return #vim.fs.find(function(name, path)
+          if vim.tbl_contains(rule.names or {}, name) then return true end
+          local probe = rule.probe and rule.probe[name]
+          return probe ~= nil and probe(joinpath(path, name))
+        end, { upward = true, path = dir, type = "file", limit = 1 }) > 0
+      end
+
       return {
         formatters_by_ft = by_ft,
         default_format_opts = { lsp_format = "fallback" },
-        format_on_save = function()
-          if vim.g.format_on_save then return { timeout_ms = 2000 } end
+        -- Called before each write; returning nil skips formatting.
+        format_on_save = function(buf)
+          if not vim.g.format_on_save then return end
+          local file = vim.api.nvim_buf_get_name(buf)
+          local dir = file ~= "" and vim.fs.dirname(file) or nil
+          local ft = vim.bo[buf].filetype
+          local entry = by_ft[ft] or {}
+          local names = {}
+          for _, name in ipairs(entry) do   -- ipairs: the list, not its stop_after_first key
+            if adopted(ON_SAVE[name], dir) then names[#names + 1] = name end
+          end
+          local lsp = adopted(ON_SAVE.lsp[ft], dir)
+          if #names == 0 and not lsp then return end
+          -- `formatters` replaces the filetype's list for this run;
+          -- stop_after_first keeps "first available wins" (goimports/gofmt).
+          return { timeout_ms = 2000, formatters = names, stop_after_first = entry.stop_after_first,
+            lsp_format = lsp and "fallback" or "never" }
         end,
       }
     end,
