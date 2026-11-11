@@ -11,6 +11,12 @@ machine; each approved state is kept as a *generation* you can return to or
 move elsewhere. Your previous Neovim setup is set aside, not deleted, and
 uninstalling restores it.
 
+> [!IMPORTANT]
+> **Network requirement.** Installing and using Super IDE downloads from
+> GitHub and other international hosts: Neovim, every plugin, the language
+> tools. Before installing, make sure this machine can reach them reliably;
+> otherwise the installation cannot complete. See [Network access](#network-access).
+
 <a id="quick-links"></a>
 <p align="center">
   <a href="#online-install">Online install</a> ·
