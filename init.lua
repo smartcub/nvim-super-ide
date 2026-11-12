@@ -161,8 +161,6 @@ local LOCK = {
     ["vim-fugitive"] = { branch = "master", commit = "3b753cf8c6a4dcde6edee8827d464ba9b8c4a6f0" },
     ["which-key.nvim"] = { branch = "main", commit = "3aab2147e74890957785941f0c1ad87d0a44c15a" },
   },
-  tools = {},
-  langs = {},
 }
 -- @@LOCK END
 
@@ -652,11 +650,6 @@ do
     block("plugins", lk.plugins, function(k, p)
       return ("    [%q] = { branch = %q, commit = %q },"):format(k, p.branch, p.commit)
     end)
-    block("tools", lk.tools, function(k, v) return ("    [%q] = %q,"):format(k, v) end)
-    local langs = vim.deepcopy(lk.langs or {})
-    table.sort(langs)
-    L[#L + 1] = #langs == 0 and "  langs = {},"
-      or ("  langs = { %s },"):format(table.concat(vim.tbl_map(function(s) return ("%q"):format(s) end, langs), ", "))
     L[#L + 1] = "}"
     return table.concat(L, "\n")
   end
@@ -716,7 +709,7 @@ do
   end
 
   -- Make a stored generation the live one: its Neovim, its init.lua, its
-  -- plugin lock. Plugins, tools and parsers are then brought in line by
+  -- plugin lock. Plugins and parsers are then brought in line by
   -- :IDESync, which must run under the new Neovim and the new file.
   function LC.switch(name)
     local text = LC.gen_text(name) or fail("no such generation: " .. tostring(name))
@@ -750,14 +743,14 @@ do
   function LC.sync_here(shielded)
     local args = { "--headless", "+IDESync", "+qa" }
     if shielded then
-      LC.say("Restoring the previous generation's plugins, tools and parsers. This can take a few")
+      LC.say("Restoring the previous generation's plugins and parsers. This can take a few")
       LC.say("minutes; please wait. Ctrl+C is ignored until it is done.")
       if run_shielded(LC.current_exe(), args, 15, "Still restoring …") ~= 0 then
         LC.warn("The restore reported problems; start nvim and run :IDESync.")
       end
       return
     end
-    LC.say("Bringing plugins, tools and parsers in line with the LOCK (first time: a few minutes) …")
+    LC.say("Bringing plugins in line with the LOCK (first time: a few minutes) …")
     local code = run_tty(LC.current_exe(), args)
     io.write("\n")
     if code ~= 0 then LC.warn("Sync reported problems; start nvim and run :IDEDoctor.") end
@@ -1158,23 +1151,17 @@ do
     return s and (text:sub(1, s - 1) .. "local LOCK = {}" .. text:sub(e)) or nil
   end
 
-  -- The release's LOCK (versions proven together), plus what the user added
-  -- on top of their base: plugins, tools and languages the base did not have.
-  -- A plugin the user removed (in the base, not in theirs) stays removed.
+  -- The release's LOCK (versions proven together), plus the plugins the user
+  -- added on top of their base. A plugin the user removed (in the base, not
+  -- in theirs) stays removed.
   local function merge_locks(base, mine, theirs)
     local out = vim.deepcopy(theirs)
-    for _, key in ipairs({ "plugins", "tools" }) do
-      out[key] = out[key] or {}
-      for name, v in pairs(mine[key] or {}) do
-        if (base[key] or {})[name] == nil and out[key][name] == nil then out[key][name] = v end
-      end
+    out.plugins = out.plugins or {}
+    for name, p in pairs(mine.plugins or {}) do
+      if (base.plugins or {})[name] == nil and out.plugins[name] == nil then out.plugins[name] = p end
     end
     for name in pairs(base.plugins or {}) do
       if (mine.plugins or {})[name] == nil then out.plugins[name] = nil end
-    end
-    out.langs = out.langs or {}
-    for _, id in ipairs(mine.langs or {}) do
-      if not vim.tbl_contains(out.langs, id) then out.langs[#out.langs + 1] = id end
     end
     return out
   end
@@ -1366,7 +1353,7 @@ do
     -- 2. Already installed: this file becomes a generation and goes live.
     --    Rolled back by going back to the generation in effect before: its
     --    files exactly as they were, then a sync, because the interrupted
-    --    sync may already have moved plugins and tools to the new LOCK.
+    --    sync may already have moved plugins to the new LOCK.
     if lexists(FILE.marker) then
       LC.say("Super IDE is already installed; importing this file as a generation.")
       local before, before_tag = LC.gen_current(), LC.current_tag()
@@ -1509,7 +1496,7 @@ do
     for _, r in ipairs(pending) do record(unpack(r)) end
     LC.history("install", name)
 
-    -- 9. Plugins, tools and parsers, installed by the pinned Neovim itself.
+    -- 9. Plugins and the command-line tools, installed by the pinned Neovim itself.
     LC.sync_here()
     end_journal()
     if drop_trash then rm(DIR.trash) end
@@ -2667,29 +2654,20 @@ local function mason_install(name, cb)
         and ("the Mason registry could not be downloaded (network or proxy?) — needed for " .. name)
         or ("unknown Mason package " .. name))
     end
-    -- The LOCK names the version proven with this file; anything else is
-    -- installed at Mason's latest and pinned by the next :IDEPin.
-    local want = LOCK.tools[name]
-    if pkg:is_installed() and (not want or pkg:get_installed_version() == want) then return cb(true) end
+    -- Language tools are not part of a generation: whatever is installed
+    -- stays, and a missing one is installed at Mason's latest version.
+    if pkg:is_installed() then return cb(true) end
     once("mason:" .. name, function(done)
       busy(name, true)
       local function finish(success, err)
         busy(name, false)
         done(success, not success and (name .. ": " .. tostring(err)) or nil)
       end
-      -- A Mason package is an object: pkg:install(opts, cb) installs it
-      -- (opts.version picks a version), pkg:once(event, fn) waits for one
-      -- that is already being installed.
+      -- A Mason package is an object: pkg:install(opts, cb) installs it,
+      -- pkg:once(event, fn) waits for one that is already being installed.
       if pkg:is_installing() then
         pkg:once("install:success", main(function() finish(true) end))
         pkg:once("install:failed", main(function(e) finish(false, e) end))
-      elseif want then
-        pkg:install({ version = want }, main(function(success, result)
-          if success then return finish(true) end
-          -- The pinned version is gone from its source: take the latest and say so.
-          notify(("%s %s is no longer available; installing the latest instead."):format(name, want), vim.log.levels.WARN)
-          pkg:install({}, main(function(s2, r2) finish(s2, r2) end))
-        end))
       else
         pkg:install({}, main(function(success, result) finish(success, result) end))
       end
@@ -4036,19 +4014,6 @@ local function git_lines(dir, args)
   return vim.split(vim.trim(r.stdout), "\n", { trimempty = true })
 end
 
--- A language is "in use" once its parsers or Mason tools are on disk.
-local function used_langs(tools)
-  local have_ts, out = ts_installed(), {}
-  for id, L in pairs(LANGS) do
-    local used = false
-    for _, l in ipairs(L.ts) do if have_ts[l] then used = true end end
-    for _, t in ipairs(L.tools) do if t.mason and (tools or {})[t.mason] then used = true end end
-    if used then out[#out + 1] = id end
-  end
-  table.sort(out)
-  return out
-end
-
 -- lazy.nvim rewrites its lockfile only after its own operations (install,
 -- update, clean, ...). Right after you delete a plugin's spec, the file still
 -- names that plugin, and a :IDEPin reading it would write the deleted plugin
@@ -4067,16 +4032,16 @@ local function undeclared_plugins()
   return ok and #(cfg.to_clean or {}) or 0
 end
 
--- What is running right now, in LOCK form.
+-- What is running right now, in LOCK form. A generation is init.lua, the
+-- Neovim release and the plugin commits; language tools (servers,
+-- formatters, debuggers) are not part of it: they are installed at their
+-- latest version the first time a language is opened.
 local function live_lock()
   refresh_lockfile()   -- see above: never trust a stale lockfile
-  local tools = installed_tools() or {}
   return {
     pinned = os.date("%Y-%m-%d %H:%M"),
     neovim = LC.running_tag(),
     plugins = LC.json_read(FILE.lockfile) or {},
-    tools = tools,
-    langs = used_langs(tools),
   }
 end
 
@@ -4114,15 +4079,6 @@ local function generation_state()
   if moved > 0 then why[#why + 1] = moved .. " plugin(s) differ from the LOCK" end
   local stale = undeclared_plugins()
   if stale > 0 then why[#why + 1] = stale .. " plugin directory(ies) no longer declared (:IDESync removes them)" end
-  local tools = installed_tools()
-  if tools then
-    local changed, added = 0, 0
-    for name, v in pairs(tools) do
-      if not LOCK.tools[name] then added = added + 1 elseif LOCK.tools[name] ~= v then changed = changed + 1 end
-    end
-    if changed > 0 then why[#why + 1] = changed .. " tool version(s) differ from the LOCK" end
-    if added > 0 then why[#why + 1] = added .. " tool(s) installed since the last pin" end
-  end
   return #why == 0 and "pinned" or "modified", why
 end
 
@@ -4171,7 +4127,8 @@ vim.api.nvim_create_autocmd("VimEnter", {
   end,
 })
 
--- :IDESync — make plugins, tools, languages and parsers match the LOCK.
+-- :IDESync — make the plugins match the LOCK, fetch the command-line tools,
+-- and rebuild parsers left for the Neovim now in place.
 -- The installer and every switch run it under the new Neovim, headless.
 vim.api.nvim_create_user_command("IDESync", function()
   local ok_lazy, manage = pcall(require, "lazy.manage")
@@ -4204,14 +4161,6 @@ vim.api.nvim_create_user_command("IDESync", function()
       if not ok then notify("Tool " .. name .. ": " .. tostring(why), vim.log.levels.WARN) end
     end)
   end
-  for name in pairs(LOCK.tools) do
-    mason_install(name, function(ok, why)
-      if not ok then notify("Tool " .. name .. ": " .. tostring(why), vim.log.levels.WARN) end
-    end)
-  end
-  wait_until_idle()
-  if #LOCK.langs > 0 then notify("Languages: " .. table.concat(LOCK.langs, ", ")) end
-  for _, id in ipairs(LOCK.langs) do ensure_lang(id, { force = true }) end
   wait_until_idle()
   if (LC.json_read(FILE.pending) or {}).parsers then
     rebuild_parsers(function(ok, why)
@@ -4220,7 +4169,7 @@ vim.api.nvim_create_user_command("IDESync", function()
     wait_until_idle()
   end
   notify("Sync finished.")
-end, { desc = "Bring plugins, tools and parsers in line with the LOCK" })
+end, { desc = "Bring plugins in line with the LOCK; fetch rg, fd and fzf; rebuild pending parsers" })
 
 -- Switch the live generation, then sync it in a window you can watch.
 local function go_to_generation(name, action)
@@ -4265,11 +4214,9 @@ local function plugin_deps(name, out)
 end
 
 -- Find everything newer, without changing anything, and call back with a
--- list of items: { kind = "neovim" | "plugin" | "tool", name, detail, … }.
+-- list of items: { kind = "neovim" | "plugin", name, detail, … }.
 -- Plugins: lazy.nvim's check fetches each repository and records in
 -- plugin._.updates where an update would move it (from/to commits).
--- Tools: the Mason registry is refreshed, then each installed package's
--- version is compared with the latest.
 local function check_updates(cb)
   local items, problems = {}, {}
   local newest = release_tags()[#release_tags()]
@@ -4300,26 +4247,10 @@ local function check_updates(cb)
       done(true)
     end))
   end
-  jobs[#jobs + 1] = function(done)
-    local ok_reg, reg = pcall(require, "mason-registry")
-    if not ok_reg then return done(true) end
-    reg.update(main(function(success)
-      mason_refreshed, mason_offline = true, not success
-      if not success then return done(false, "the Mason registry could not be downloaded") end
-      for _, pkg in ipairs(reg.get_installed_packages()) do
-        local have = pkg:get_installed_version()
-        local ok_v, latest = pcall(pkg.get_latest_version, pkg)
-        if ok_v and have and latest ~= have then
-          items[#items + 1] = { kind = "tool", name = pkg.name, pkg = pkg, detail = ("%s → %s"):format(have, latest) }
-        end
-      end
-      done(true)
-    end))
-  end
   all(jobs, function(results)
     for _, r in ipairs(results) do if not r.ok and r.why then problems[#problems + 1] = r.why end end
-    -- Neovim first, then plugins, then tools; each group sorted by name.
-    local order = { neovim = 1, plugin = 2, tool = 3 }
+    -- Neovim first, then plugins sorted by name.
+    local order = { neovim = 1, plugin = 2 }
     table.sort(items, function(a, b)
       if a.kind ~= b.kind then return order[a.kind] < order[b.kind] end
       return a.name < b.name
@@ -4329,18 +4260,18 @@ local function check_updates(cb)
 end
 
 -- Make the chosen items a candidate: the Neovim build (if chosen) goes in
--- place, then the chosen plugins and tools are updated. Parsers follow
+-- place, then the chosen plugins are updated. Parsers follow
 -- nvim-treesitter, whose plugin decides their versions.
 local function apply_updates(chosen, scope)
   local ok, err = pcall(function()
     local base = LC.gen_current() or LC.fail("no generation stored yet; :IDEPin first")
-    local tag, plugins, tools, parsers = LOCK.neovim, {}, {}, false
+    local tag, plugins, parsers = LOCK.neovim, {}, false
     for _, it in ipairs(chosen) do
       if it.kind == "neovim" then tag = it.tag
-      elseif it.kind == "plugin" then
+      else
         plugins[#plugins + 1] = it.name
         if it.name == "nvim-treesitter" then parsers = true end
-      else tools[#tools + 1] = it.pkg end
+      end
     end
     if tag ~= LC.current_tag() then
       LC.fetch_neovim(tag)
@@ -4358,11 +4289,6 @@ local function apply_updates(chosen, scope)
       jobs[#jobs + 1] = function(cb)
         -- show = false: no :Lazy window; only the named plugins are updated.
         require("lazy.manage").update({ show = false, plugins = plugins }):wait(function() cb(true) end)
-      end
-    end
-    for _, pkg in ipairs(tools) do
-      jobs[#jobs + 1] = function(cb)
-        pkg:install({}, main(function(s, e) cb(s, not s and (pkg.name .. ": " .. tostring(e)) or nil) end))
       end
     end
     local ok_ts, nts = pcall(require, "nvim-treesitter")
@@ -4522,15 +4448,15 @@ vim.api.nvim_create_user_command("IDEUpdateUnsafe", function(cmd)
   end)
   if not ok then busy("update", false); notify("Update failed: " .. tostring(err), vim.log.levels.ERROR) end
 end, {
-  nargs = "?", desc = "Try upstream's newest Neovim, plugins and tools (unproven) as a candidate: choose, --all, or one Neovim version",
+  nargs = "?", desc = "Try upstream's newest Neovim and plugins (unproven) as a candidate: choose, --all, or one Neovim version",
   -- <Tab> offers --all, then the release tags, newest first. deepcopy:
   -- reverse() changes the list in place, and the cached one must stay in order.
   complete = function() return vim.list_extend({ "--all" }, vim.fn.reverse(vim.deepcopy(release_tags()))) end,
 })
 
 -- :IDEUpdate [vX.Y.Z] — move to a published release of Super IDE (the newest,
--- or the one named) as a candidate. A release is one init.lua whose Neovim,
--- plugins and tools were proven together; your own changes to init.lua are
+-- or the one named) as a candidate. A release is one init.lua whose Neovim
+-- and plugins were proven together; your own changes to init.lua are
 -- merged into it (LC.release_plan, section 3). If they cannot be, you are
 -- asked before the release replaces them. Then: restart, try it, :IDEDiff,
 -- and :IDEPin or :IDERollback, as with any candidate.
@@ -4607,8 +4533,7 @@ vim.api.nvim_create_user_command("IDEPin", function()
     if undeclared_plugins() > 0 then pcall(function() require("lazy.manage").clean({ wait = true, show = false }) end) end
     LC.history("pin", name)
     LOCK = lk   -- this session now agrees with the file
-    notify(("Pinned generation %s: Neovim %s, %d plugins, %d tools, %d languages."):format(
-      name, lk.neovim, vim.tbl_count(lk.plugins), vim.tbl_count(lk.tools), #lk.langs))
+    notify(("Pinned generation %s: Neovim %s, %d plugins."):format(name, lk.neovim, vim.tbl_count(lk.plugins)))
   end)
   if not ok then notify("Pin failed: " .. tostring(err), vim.log.levels.ERROR) end
 end, { desc = "Record the live state as a new generation" })
@@ -4836,8 +4761,8 @@ vim.api.nvim_create_user_command("IDEDoctor", function()
   for _, w in ipairs(why) do add("             · " .. w) end
   if state ~= "pinned" then add("             :IDEDiff lists the changes") end
   add(("  in effect  %s   (%d stored; :IDESwitch lists them)"):format(LC.gen_current() or "none", #LC.gen_list()))
-  add(("  LOCK       Neovim %s · %d plugins · %d tools · pinned %s"):format(
-    LOCK.neovim, vim.tbl_count(LOCK.plugins), vim.tbl_count(LOCK.tools), LOCK.pinned ~= "" and LOCK.pinned or "never"))
+  add(("  LOCK       Neovim %s · %d plugins · pinned %s"):format(
+    LOCK.neovim, vim.tbl_count(LOCK.plugins), LOCK.pinned ~= "" and LOCK.pinned or "never"))
   local hist = read_records("history.tsv")
   if #hist > 0 then
     add("  history")
@@ -4880,10 +4805,13 @@ vim.api.nvim_create_user_command("IDEDoctor", function()
     add(("  %s %-10s %s"):format(mark(exe(b)), b, exe(b) and source_of(b) or "not found (only needed for that language)"))
   end
   add("")
-  add("Languages")
+  -- Language tools are not pinned, so their installed versions are listed
+  -- here: what to report when a server or formatter misbehaves.
+  add("Languages   (tool: source, version)")
   local ids = vim.tbl_keys(LANGS)
   table.sort(ids)
   local have_ts = ts_installed()
+  local versions = installed_tools() or {}
   for _, id in ipairs(ids) do
     local lang = LANGS[id]
     local parts = {}
@@ -4892,7 +4820,8 @@ vim.api.nvim_create_user_command("IDEDoctor", function()
     parts[#parts + 1] = "parser " .. mark(ts_ok)
     for _, t in ipairs(lang.tools) do
       local s = source_of(t.bin)
-      parts[#parts + 1] = ("%s %s%s"):format(t.bin, mark(s), s and ("(" .. s .. ")") or "")
+      local v = s == "mason" and t.mason and versions[t.mason]
+      parts[#parts + 1] = ("%s %s%s"):format(t.bin, mark(s), s and ("(" .. s .. (v and (" " .. v) or "") .. ")") or "")
     end
     if lang.dap then parts[#parts + 1] = "debug:" .. lang.dap end
     add(("  %-22s %s"):format(lang.label, table.concat(parts, "  ")))
@@ -4914,8 +4843,7 @@ end, { desc = "Report what the IDE has, lacks, and where things came from" })
 
 -- :IDEDiff — what the live state changes against the generation in effect
 -- (its LOCK and its init.lua): the Neovim release, each plugin's commits with
--- their subjects, tool versions, languages newly in use, and the text of
--- init.lua. It answers "what did this update bring?" before :IDEPin or
+-- their subjects, and the text of init.lua. It answers "what did this update bring?" before :IDEPin or
 -- :IDERollback, and does the same for unpinned changes made by hand.
 -- Commit subjects come from the plugins' local git history (an update has
 -- already fetched them), so no network is needed.
@@ -5005,35 +4933,6 @@ vim.api.nvim_create_user_command("IDEDiff", function()
   add(("Plugins  %d changed, %d unchanged"):format(moved, same))
   vim.list_extend(L, block)
   add("")
-
-  -- Tools: versions installed now against the LOCK. A pinned tool that is not
-  -- installed here only means that language was not opened on this machine.
-  local tools = installed_tools() or {}
-  local tnames = vim.tbl_keys(tools)
-  table.sort(tnames)
-  local tblock, tsame = {}, 0
-  for _, name in ipairs(tnames) do
-    local old, new = LOCK.tools[name], tools[name]
-    if old == new then
-      tsame = tsame + 1
-    elseif not old then
-      tblock[#tblock + 1] = ("  %-24s new, %s"):format(name, new)
-    else
-      tblock[#tblock + 1] = ("  %-24s %s → %s"):format(name, old, new)
-    end
-  end
-  changes = changes + #tblock
-  add(("Tools    %d changed, %d unchanged"):format(#tblock, tsame))
-  vim.list_extend(L, tblock)
-  add("")
-
-  -- Languages in use that the LOCK does not list yet.
-  local newlangs = vim.tbl_filter(function(id) return not vim.tbl_contains(LOCK.langs, id) end, used_langs(tools))
-  if #newlangs > 0 then
-    changes = changes + #newlangs
-    add("Languages  new: " .. table.concat(newlangs, ", "))
-    add("")
-  end
 
   -- init.lua itself: edits since the generation was stored (settings, specs
   -- added by :IDEAdd, …), as a unified diff with two lines of context.

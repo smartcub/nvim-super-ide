@@ -5,9 +5,9 @@
 # Neovim Super IDE
 
 A keyboard-first IDE in **one file**, `init.lua`, for Linux, macOS and Windows.
-One command installs it with everything it needs. The file pins Neovim, every
-plugin and every language tool, so the same file builds the same IDE on any
-machine; each approved state is kept as a *generation* you can return to or
+One command installs it with everything it needs. The file pins Neovim and
+every plugin, so the same file builds the same IDE on any machine; each
+approved state is kept as a *generation* you can return to or
 move elsewhere. Your previous Neovim setup is set aside, not deleted, and
 uninstalling restores it.
 
@@ -229,7 +229,10 @@ after Neovim exits (write or discard unsaved files first); its log is
 <p align="right"><a href="#quick-links">↑ Back to links</a></p>
 
 A **generation** is a complete `init.lua`: code plus a `LOCK` naming the Neovim
-version, plugin commits, tool versions and languages. Every approved state is
+version and the plugin commits. Language tools (servers, formatters, debuggers)
+are not part of it: each is installed at its latest version the first time you
+open a file of its language, and stays installed whatever generation you switch
+to. `:IDEDoctor` lists their versions. Every approved state is
 stored as one, in `~/.local/share/nvim/super-ide/generations/`, named by date
 and Neovim version. The workflow:
 
@@ -243,18 +246,18 @@ and Neovim version. The workflow:
 | State | Meaning | Reached by |
 |:--|:--|:--|
 | **pinned** | Everything matches the generation in effect | Install, `:IDEPin`, `:IDERollback`, `:IDESwitch` |
-| **unpinned changes** | You edited `init.lua`, ran `:Lazy update`, upgraded a tool in `:Mason`, or opened a new language whose tools are not in the `LOCK` yet | Using the IDE |
+| **unpinned changes** | You edited `init.lua` or ran `:Lazy update` | Using the IDE |
 | **candidate** | Something newer is being tried | `:IDEUpdate`, `:IDEUpdateUnsafe` |
 
 | Command | What it does |
 |:--|:--|
-| `:IDEUpdate` | Move to the newest **release of Super IDE** as a candidate: one `init.lua` whose Neovim, plugins and tools were proven together. Your own changes to `init.lua` are merged in |
+| `:IDEUpdate` | Move to the newest **release of Super IDE** as a candidate: one `init.lua` whose Neovim and plugins were proven together. Your own changes to `init.lua` are merged in |
 | `:IDEUpdate v1.2.0` | The same, to that release (Tab completes the releases) |
-| `:IDEUpdateUnsafe` | Try what is newer **upstream**, unproven: choose in a checklist among Neovim, each plugin and each tool. `--all` takes everything; `v0.12.5` changes only Neovim (crossing a minor version asks first) |
-| `:IDEDiff` | Show what the live state changes against the generation in effect: release, Neovim, each plugin's commits (with their subjects), tool versions, new languages, edits to `init.lua` |
+| `:IDEUpdateUnsafe` | Try what is newer **upstream**, unproven: choose in a checklist among Neovim and each plugin. `--all` takes everything; `v0.12.5` changes only Neovim (crossing a minor version asks first) |
+| `:IDEDiff` | Show what the live state changes against the generation in effect: release, Neovim, each plugin's commits (with their subjects), edits to `init.lua` |
 | `:IDEPin` | Approve the live state: write it into the `LOCK` of `init.lua` and store the file as a new generation |
 | `:IDERollback` | Drop the candidate or the unpinned changes; return to the generation in effect. An edited `init.lua` is first set aside in `super-ide/rejected/` |
-| `:IDESwitch <generation>` | Go to any stored generation (Tab lists them, newest first): its Neovim, its `init.lua`, its plugins, tools and parsers |
+| `:IDESwitch <generation>` | Go to any stored generation (Tab lists them, newest first): its Neovim, its `init.lua`, its plugins |
 | `:IDEExport [dir] [--history]` | Write the generation in effect to `dir/init.lua` (with `--history`, every stored generation too) |
 
 **`:IDEUpdate` and your own changes.** Settings you changed and plugins you
@@ -268,14 +271,14 @@ release as published, and your version stays stored as a generation
 `a` ticks all, `n` none, `Enter` updates the ticked items, `q` cancels. Nothing
 is ticked at first; ticking a plugin also ticks the plugins it depends on.
 
-`:IDEDoctor` shows the release, the state and why, the generation in effect and
-recent history.
+`:IDEDoctor` shows the release, the state and why, the generation in effect,
+recent history, and the version of each installed language tool.
 
 - **Only pinned generations are exported.** `:IDEExport` skips a candidate or
   unpinned edits and says so; `:IDEPin` first to include them.
 - **Code and versions switch together.** A switch replaces `init.lua` and
-  checks out that generation's Neovim, plugins and tools, then rebuilds the
-  parsers, so any two stored generations can be switched safely.
+  checks out that generation's Neovim and plugins, then rebuilds the
+  parsers if Neovim changed, so any two stored generations can be switched safely.
 
 ### Moving to another machine
 
@@ -290,7 +293,8 @@ copy the scripts next to it, or run `nvim -l init.lua install` with Neovim 0.12+
 
 On a machine without Super IDE this is a fresh install; otherwise the file is
 imported as a new generation (with a `generations/` folder from `--history`, if
-present). Either way the target gets the same Neovim, plugins and tools.
+present). Either way the target gets the same Neovim and plugins; language
+tools install there the first time each language is opened.
 
 ---
 
@@ -436,14 +440,14 @@ dragging to use the terminal's own selection.
 | `:IDEInstall [lang… \| all]` | Provision languages now (no argument: the current buffer's language) |
 | `:IDEPrewarm [dir]` | Scan a directory and provision every language found in it |
 | `:IDEUpdate [vX.Y.Z]` | Move to the newest (or the named) release of Super IDE as a candidate, keeping your own changes ([Generations](#generations)) |
-| `:IDEUpdateUnsafe [--all \| vX.Y.Z]` | Try upstream's newest Neovim, plugins and tools, unproven, as a candidate: chosen in a checklist, all of them, or only another Neovim |
+| `:IDEUpdateUnsafe [--all \| vX.Y.Z]` | Try upstream's newest Neovim and plugins, unproven, as a candidate: chosen in a checklist, all of them, or only another Neovim |
 | `:IDEDiff` | What the live state changes against the generation in effect |
 | `:IDEPin` | Record the live state as a new generation |
 | `:IDERollback` | Return to the generation in effect |
 | `:IDESwitch <generation>` | Switch to a stored generation |
 | `:IDEExport [dir] [--history]` | Export the generation in effect |
 | `:IDEAdd <owner/repo \| git URL>` | Declare and install a new plugin ([Plugins](#plugins)); `:IDEPin` locks it after you have tried it |
-| `:IDESync` | Bring plugins, tools (including `rg`, `fd`, `fzf`) and parsers in line with the `LOCK` (run for you after install and switches) |
+| `:IDESync` | Bring the plugins in line with the `LOCK`, fetch `rg`, `fd` and `fzf`, and rebuild parsers after a Neovim change (run for you after install and switches) |
 | `:IDEUninstall` | Remove Super IDE; keep its state in the trash or delete it |
 | `:ColumnGuidesToggle` / `On` / `Off` | Column guides |
 | `:LspInfo` | Alias for `:checkhealth vim.lsp` |
@@ -465,8 +469,9 @@ export EDITOR=nvim VISUAL=nvim    # in ~/.profile: crontab -e, sudoedit, … ope
 
 The first time you open a file of a language, the IDE sets that language up in
 the background: syntax highlighting, language server, formatter. A tool you
-installed yourself always wins; the rest comes through **Mason**, at the version
-in the `LOCK`. The statusline shows `⟳ name` during downloads; later opens cost
+installed yourself always wins; the rest comes through **Mason**, at its latest
+version. To update a language tool later, or to go back to an older version,
+use `:Mason`. The statusline shows `⟳ name` during downloads; later opens cost
 nothing.
 
 | Layer | Examples | Who provides it |
@@ -526,8 +531,8 @@ zig = {
 },
 ```
 
-Open a Zig file, then `:IDEPin` to record the language and its tool versions in
-the `LOCK`.
+Open a Zig file: its tools install the first time, as for every language.
+Then `:IDEPin` keeps the edited `init.lua` as a new generation.
 
 ### Formatting on save
 
@@ -670,7 +675,7 @@ Start with **`:IDEDoctor`**. Then:
 | A language says “partly ready” | `:IDEDoctor` lists each problem under that language. Fix it, then `:IDEInstall <lang>` |
 | Python never gets a language server | `python3-venv` is missing: `sudo apt install python3-venv`, then `:IDEInstall python` |
 | “the Mason registry could not be downloaded” | Mason reaches `api.github.com`. Check the network; `:MasonUpdate` retries |
-| A pinned tool version “is no longer available” | Its source dropped that version; the latest was installed instead. `:IDEPin` records it |
+| A language tool's new version misbehaves | `:IDEDoctor` shows the installed version; `:MasonInstall name@version` installs an older one |
 | A finder key (`f`, `r`, `g`, `<C-p>` …) says “fzf could not be downloaded” | The finders need the `fzf` program. Check the network and press the key again, or install `fzf` with your package manager |
 | No syntax colours after a switch or update | Parsers are rebuilt for the new Neovim on the next start; this needs a C compiler. `:IDESync` retries |
 | No language server for C/C++ | clangd needs `compile_commands.json` (below). On Linux arm64 Mason has no clangd; the IDE offers `apt-get install clangd` |
