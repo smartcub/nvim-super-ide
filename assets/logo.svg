@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 776 608" width="776" height="608" role="img" aria-label="Neovim Super IDE 启动画面：ASCII 六芒星与快捷键菜单">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 776 608" width="776" height="608" role="img" aria-label="Neovim Super IDE start screen: ASCII hexagram and key menu">
 <title>Neovim Super IDE</title>
 <rect width="776" height="608" rx="12" fill="#002b36"/>
 <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace" font-size="20" text-anchor="middle">
@@ -68,6 +68,12 @@
 <text x="490" y="250" fill="#b58900" font-weight="bold">\</text>
 <text x="274" y="274" fill="#b58900" font-weight="bold">/</text>
 <text x="310" y="274" fill="#e45a57">\</text>
+<text x="358" y="274" fill="#2aa198">v</text>
+<text x="370" y="274" fill="#2aa198">1</text>
+<text x="382" y="274" fill="#2aa198">.</text>
+<text x="394" y="274" fill="#2aa198">0</text>
+<text x="406" y="274" fill="#2aa198">.</text>
+<text x="418" y="274" fill="#2aa198">0</text>
 <text x="466" y="274" fill="#e45a57">/</text>
 <text x="502" y="274" fill="#b58900" font-weight="bold">\</text>
 <text x="262" y="298" fill="#b58900" font-weight="bold">/</text>

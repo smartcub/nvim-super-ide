@@ -3739,7 +3739,9 @@ end, { desc = "UndoTree" })
 -- ============================================================================
 -- Two interlocking triangles, generated rather than pasted: the upward one in
 -- one colour, the downward one in another, the title in the hexagon between.
-local function hexagram(n, title1, title2)
+-- title1 and title2 go on the two widest rows of the hexagon; version, if
+-- given, on the row below them.
+local function hexagram(n, title1, title2, version)
   -- n: rows per triangle (a multiple of 3 keeps the star symmetric)
   local k = n / 3                       -- the downward triangle starts k rows lower
   local c0 = n + 1                      -- apex column of the upward triangle
@@ -3763,9 +3765,23 @@ local function hexagram(n, title1, title2)
   for c = c0 - n + 2, c0 + n - 1 do put(n - 1, c, "_", "SuperIdeUp") end   -- upward base
   for c = c0 - n + 1, c0 + n do put(k - 1, c, "_", "SuperIdeDown") end     -- downward top
   local mid = math.floor((n - 1 + k) / 2)   -- the widest rows of the hexagon
-  for i, text in ipairs({ title1, title2 }) do
-    local start = c0 - math.floor((#text - 1) / 2)
-    for j = 1, #text do grid[mid + i - 1][start + j - 1] = { text:sub(j, j), "SuperIdeTitle" } end
+  -- The texts are written into cells of the finished grid, never spliced into
+  -- a line, so the star keeps its shape whatever their length. A text is
+  -- drawn only where it and one blank on each side fit between the lines;
+  -- one that would not fit (a very long version) is left out.
+  local texts = { { title1, "SuperIdeTitle" }, { title2, "SuperIdeTitle" }, { version, "SuperIdeVersion" } }
+  for i, t in ipairs(texts) do
+    local text, hl, r = t[1], t[2], mid + i - 1
+    if text then
+      local start = c0 - math.floor((#text - 1) / 2)
+      local fits = true
+      for c = start - 1, start + #text do
+        if not (grid[r][c] and grid[r][c][1] == " ") then fits = false end
+      end
+      if fits then
+        for j = 1, #text do grid[r][start + j - 1] = { text:sub(j, j), hl } end
+      end
+    end
   end
   local lines, hls = {}, {}
   for r = 0, rows - 1 do
@@ -3794,6 +3810,9 @@ local function dash_highlights()
   vim.api.nvim_set_hl(0, "SuperIdeUp", { link = "Function", default = true })
   vim.api.nvim_set_hl(0, "SuperIdeDown", { link = "Statement", default = true })
   vim.api.nvim_set_hl(0, "SuperIdeTitle", { link = "Title", default = true })
+  -- The release under the title: cyan in Solarized (Constant), the one accent
+  -- not yet on this screen, and not bold, so it stays below the title.
+  vim.api.nvim_set_hl(0, "SuperIdeVersion", { link = "Constant", default = true })
   vim.api.nvim_set_hl(0, "SuperIdeKey", { link = "Special", default = true })
   vim.api.nvim_set_hl(0, "SuperIdeFooter", { link = "Comment", default = true })
 end
@@ -3805,7 +3824,7 @@ local function dash_render()
   if win == -1 then return end
   local W, H = vim.api.nvim_win_get_width(win), vim.api.nvim_win_get_height(win)
 
-  local art, art_hls, art_w = hexagram(12, "Neovim", "Super IDE")
+  local art, art_hls, art_w = hexagram(12, "Neovim", "Super IDE", LOCK.release and ("v" .. LOCK.release))
   local menu = {}
   for i = 1, #DASH_ITEMS, 3 do
     local row = {}
