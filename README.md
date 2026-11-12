@@ -42,8 +42,8 @@ nvim            # then  :IDEDoctor
 
 - **Use it**: `nvim file.c`. Language servers, formatters and debuggers download
   the first time you open a file of that language. Leader is `,`.
-- **Update**: `:IDEUpdate --all`, restart, try it, then `:IDEPin` to keep it
-  or `:IDERollback` to drop it. Without `--all` you choose what to update.
+- **Update**: `:IDEUpdate` moves to the newest release of Super IDE. Restart,
+  try it, then `:IDEPin` to keep it or `:IDERollback` to drop it.
 - **Remove**: `:IDEUninstall`.
 
 ---
@@ -54,8 +54,7 @@ nvim            # then  :IDEDoctor
 
 <p align="right"><a href="#quick-links">↑ Back to links</a></p>
 
-No files needed; the script downloads `init.lua` and both scripts to a temporary
-directory and installs from there.
+No files needed.
 
 ```sh
 # Ubuntu / Debian (also WSL), macOS
@@ -82,8 +81,6 @@ the scripts install the `init.lua` beside them.
 | `init.lua` | The IDE and its own installer, uninstaller and version manager |
 | `install.sh` | Setup for Linux and macOS: system packages, pinned Neovim, then `init.lua install` |
 | `install.ps1` | The same for Windows 10 / 11 |
-| `assets/` | `logo.svg` and `gen_logo.py`, which generates it |
-| `.editorconfig` | Indentation and line endings for contributors' editors |
 
 | System | Command |
 |:--|:--|
@@ -102,8 +99,11 @@ that on macOS it only starts Apple's installer for missing packages.
 
 With the one-liners, pass options after `sh -s --` (`… | sh -s -- --yes`); on
 Windows use `& ([scriptblock]::Create((irm <URL>))) --yes`, because `irm | iex`
-cannot pass arguments. To install from a fork or mirror, set `SUPER_IDE_REPO`
-(`owner/repo`) or `SUPER_IDE_BASE` (full base URL).
+cannot pass arguments.
+
+To install a particular release instead of the newest, set `SUPER_IDE_REF`:
+`curl … | SUPER_IDE_REF=v1.2.0 sh`, or in PowerShell
+`$env:SUPER_IDE_REF = 'v1.2.0'` before the `irm` line.
 
 ### Requirements
 
@@ -125,15 +125,11 @@ script lists what is missing and stops only for required ones.
 |:--|:--|
 | Ubuntu / Debian | `sudo apt-get install -y` the missing ones of: `git curl tar unzip build-essential python3 python3-venv`, plus `wl-clipboard` or `xclip` in a graphical session |
 | macOS | `xcode-select --install` (git, clang, python3); curl, tar and unzip are part of macOS. Homebrew is not needed |
-| Windows | `winget install -e --id` `Git.Git`, `LLVM.LLVM` (clang) and `Python.Python.3.12`. LLVM leaves clang off `PATH`; Super IDE finds it in `C:\Program Files\LLVM\bin` by itself. Python must be on `PATH` (the installer's "Add Python to environment variables") |
+| Windows | `winget install -e --id` `Git.Git`, `LLVM.LLVM` (clang) and `Python.Python.3.12`. Python must be on `PATH` (the installer's "Add Python to environment variables") |
 
-If *unattended-upgrades* holds the package lock (common on a fresh Ubuntu), the
-script waits up to 10 minutes.
-
-Neovim is the official release from <https://github.com/neovim/neovim/releases>.
-On Linux it needs a recent glibc; on older systems it fails with
-"GLIBC_2.xx not found". The distribution package is not used (Ubuntu 24.04 ships
-0.9.5, which is too old).
+Neovim itself is downloaded for you: the official release from
+<https://github.com/neovim/neovim/releases>. On Linux it needs a recent glibc
+(Ubuntu 22.04 or newer).
 
 **Optional: the toolchains you write code with.** Not installed automatically,
 since the version depends on your project:
@@ -160,53 +156,32 @@ access yourself before installing; otherwise the first download fails, typically
 with `curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443`.
 
 Hosts used: `github.com` (Neovim, plugins, Mason packages, parsers),
-`api.github.com` (Mason's registry), `nodejs.org`, `api.adoptium.net` (JDK),
+`raw.githubusercontent.com` (Super IDE itself), `api.github.com` (Mason's registry), `nodejs.org`, `api.adoptium.net` (JDK),
 `pypi.org` / `files.pythonhosted.org`, `registry.npmjs.org`, and your
 distribution's package mirror. Mirrors are configured in [Settings](#settings).
 
-### What the installer does
+### What installing changes
 
-The script (`install.sh` / `install.ps1`):
+- **System packages** ([Requirements](#requirements)) are installed only after
+  you approve the exact command; the system is never upgraded as a whole.
+- **Neovim** goes to `~/.local/opt/super-ide` (Windows: `%LOCALAPPDATA%\super-ide`),
+  apart from any system Neovim.
+- **Your existing Neovim configuration** is renamed to `nvim-orig` and still
+  runs ([Files and directories](#files-and-directories)).
+- **The `nvim` command** starts Super IDE:
+  - Linux / macOS: the link `~/.local/bin/nvim`. On Ubuntu, log in again if
+    `~/.local/bin` is new; on macOS the installer offers to add a marked line
+    to `~/.zprofile`.
+  - Windows: an entry in the user `PATH`. A system-wide Neovim (winget's
+    default) is found first; remove it (`winget uninstall Neovim.Neovim`) or
+    start Super IDE by its full path.
+- **State kept by an earlier uninstall** is offered for restoring.
 
-0. Without `init.lua` beside it (piped from `curl` or `irm`): downloads the
-   three files from the repository.
-1. Reads the Neovim version pinned in the `LOCK` (currently **v0.12.6**).
-2. Installs missing system packages ([Requirements](#requirements)): shows the exact command (`apt-get`,
-   `xcode-select --install` or `winget install`) and runs it only with your
-   consent. It never upgrades the whole system.
-3. Downloads that Neovim release to a temporary directory, unless Super IDE
-   already has it.
-4. Runs it as the installer, `nvim -l init.lua install` (below), reusing the
-   downloaded archive.
-5. Removes the temporary directory.
-
-The script can be re-run safely.
-
-`init.lua install`:
-
-1. Checks the system, CPU and required packages ([Requirements](#requirements)).
-2. If Super IDE is already installed, **imports** the file as a new generation
-   ([Generations](#generations)) and stops.
-3. Unpacks the pinned Neovim into `~/.local/opt/super-ide/nvim-<version>`
-   (Windows: `%LOCALAPPDATA%\super-ide`), testing it before moving it into place.
-4. Renames your existing Neovim directories to `nvim-orig` ([Files and directories](#files-and-directories)).
-5. Offers to restore the state kept by an earlier uninstall, if any.
-6. Copies `init.lua` to `~/.config/nvim`, stores it as the first generation and
-   writes the plugin lock file. The scripts are kept for `:IDEExport`.
-7. Makes the `nvim` command start the pinned Neovim:
-   - **Linux / macOS**: the link `~/.local/bin/nvim`. On Ubuntu, `~/.profile`
-     adds `~/.local/bin` to `PATH` at login (log in again if it is new). On
-     macOS the installer offers to add a marked line to `~/.zprofile`.
-   - **Windows**: an entry in the user `PATH`. The *system* `PATH` is searched
-     first, so a system-wide Neovim (winget's default) still wins; the installer
-     warns about it. Remove it (`winget uninstall Neovim.Neovim`) or start
-     Super IDE by its full path.
-8. Runs the pinned Neovim headless to install the pinned plugins and tools and
-   the languages listed in the `LOCK`.
-
-With Neovim **0.12+** already present, `nvim -l init.lua install` can be run
-directly. It does the same, except that on macOS it only starts Apple's
-installer for missing packages.
+**Installing over an existing Super IDE** shows a warning and asks first: the
+file being installed replaces the live `init.lua` as it is, and changes you
+made to your own `init.lua` are not merged. The generations stored so far are
+kept. To move to a new release and keep your changes, use `:IDEUpdate`
+([Generations](#generations)).
 
 ### Cancelling
 
@@ -230,32 +205,22 @@ nvim -l ~/.config/nvim/init.lua uninstall      # from a terminal
 ```
 
 `--keep-state` / `--discard-state` answer the question in advance; `--yes`
-keeps the state. The removal runs from a copy of `init.lua` in the system temp
-folder, because a running Neovim cannot delete its own directories.
+keeps the state.
 
-- **From a terminal** (Linux, macOS) it runs in the foreground.
-- **From `:IDEUninstall`, and on Windows**, it runs in the background after
-  Neovim exits (unsaved files must be written or discarded first). The log is
-  `$TMPDIR/super-ide-uninstall-*/uninstall.log` (default `/tmp`; Windows:
-  `%TEMP%\super-ide-uninstall-*\uninstall.log`), readable by you only and
-  removed by the next uninstall.
+- **Restored**: your previous configuration (`nvim-orig` back to `nvim`), git's
+  `core.editor`, your `PATH` / `~/.zprofile`, and the clangd links inside your
+  projects.
+- **Removed**: the `nvim` command, the Neovim builds, the cache.
+- **Kept or deleted, as you answer**: Super IDE's state (plugins, tools,
+  generations, history). Kept, it moves to `~/.local/share/.super-ide-trash`
+  (Windows: `%LOCALAPPDATA%\.super-ide-trash`) and the next install offers to
+  restore it; delete that folder to remove it for good.
+- **Left alone**: system packages (they are listed).
 
-Steps:
-
-1. removes the clangd links and `.git/info/exclude` lines inside your projects;
-2. restores git's `core.editor` (and removes a `~/.gitconfig` that existed only for it);
-3. removes the `nvim` command: the link, the `~/.zprofile` line, or the user `PATH` entry;
-4. **keeps or deletes Super IDE's state**:
-   - **keep** (default): config, data and state (plugins, tools, generations,
-     history) move to `~/.local/share/.super-ide-trash` (Windows:
-     `%LOCALAPPDATA%\.super-ide-trash`); the next install offers to restore them.
-   - **delete**: they are removed, together with any older trash.
-5. renames `nvim-orig` back to `nvim`;
-6. removes the Neovim builds and any now-empty directories the install created
-   (`~/.local/bin`, `~/.cache`, …).
-
-System packages are listed but kept. On Ubuntu 24.04.5, install followed by
-uninstall (delete) leaves the home directory identical to before.
+From `:IDEUninstall`, and on Windows, the removal finishes in the background
+after Neovim exits (write or discard unsaved files first); its log is
+`$TMPDIR/super-ide-uninstall-*/uninstall.log` (default `/tmp`; Windows:
+`%TEMP%\super-ide-uninstall-*\uninstall.log`).
 
 ---
 
@@ -269,44 +234,48 @@ stored as one, in `~/.local/share/nvim/super-ide/generations/`, named by date
 and Neovim version. The workflow:
 
 ```
-:IDEUpdate [--all]  →  restart, try it, :IDEDiff  →  :IDEPin       keep it as a new generation
-                                                  →  :IDERollback  drop it, back to the generation in effect
-:IDESwitch <generation>                                   go to any stored generation
-:IDEExport [dir] [--history]                              take the generation in effect to another machine
+:IDEUpdate  →  restart, try it, :IDEDiff  →  :IDEPin       keep it as a new generation
+                                          →  :IDERollback  drop it, back to the generation in effect
+:IDESwitch <generation>                           go to any stored generation
+:IDEExport [dir] [--history]                      take the generation in effect to another machine
 ```
 
 | State | Meaning | Reached by |
 |:--|:--|:--|
 | **pinned** | Everything matches the generation in effect | Install, `:IDEPin`, `:IDERollback`, `:IDESwitch` |
 | **unpinned changes** | You edited `init.lua`, ran `:Lazy update`, upgraded a tool in `:Mason`, or opened a new language whose tools are not in the `LOCK` yet | Using the IDE |
-| **candidate** | Something newer is being tried | `:IDEUpdate` |
+| **candidate** | Something newer is being tried | `:IDEUpdate`, `:IDEUpdateUnsafe` |
 
 | Command | What it does |
 |:--|:--|
-| `:IDEUpdate` | Check what is newer (Neovim, each plugin, each tool), then choose in a checklist which of them make the **candidate**. Nothing is ticked at first; ticking a plugin also ticks the plugins it depends on |
-| `:IDEUpdate --all` | Make a candidate of everything newer, without asking |
-| `:IDEUpdate v0.12.5` | Change **only Neovim** to that release (Tab completes the releases ≥ 0.12); plugins and tools stay as pinned. Crossing a minor version asks first |
-| `:IDEDiff` | Show what the live state changes against the generation in effect: Neovim release, each plugin's commits (with their subjects), tool versions, new languages, edits to `init.lua` |
-| `:IDEPin` | Approve the live state: write it into the `LOCK` of `init.lua`, store the file as a new generation, remove the Neovim builds no longer used |
+| `:IDEUpdate` | Move to the newest **release of Super IDE** as a candidate: one `init.lua` whose Neovim, plugins and tools were proven together. Your own changes to `init.lua` are merged in |
+| `:IDEUpdate v1.2.0` | The same, to that release (Tab completes the releases) |
+| `:IDEUpdateUnsafe` | Try what is newer **upstream**, unproven: choose in a checklist among Neovim, each plugin and each tool. `--all` takes everything; `v0.12.5` changes only Neovim (crossing a minor version asks first) |
+| `:IDEDiff` | Show what the live state changes against the generation in effect: release, Neovim, each plugin's commits (with their subjects), tool versions, new languages, edits to `init.lua` |
+| `:IDEPin` | Approve the live state: write it into the `LOCK` of `init.lua` and store the file as a new generation |
 | `:IDERollback` | Drop the candidate or the unpinned changes; return to the generation in effect. An edited `init.lua` is first set aside in `super-ide/rejected/` |
 | `:IDESwitch <generation>` | Go to any stored generation (Tab lists them, newest first): its Neovim, its `init.lua`, its plugins, tools and parsers |
 | `:IDEExport [dir] [--history]` | Write the generation in effect to `dir/init.lua` (with `--history`, every stored generation too) |
 
-In the checklist: `Space` ticks the item under the cursor, `a` ticks all, `n`
-none, `Enter` updates the ticked items, `q` cancels. A new Neovim is unpacked
-next to the current one; restart to run it. Tree-sitter parsers are updated
-together with `nvim-treesitter`, whose version decides theirs.
+**`:IDEUpdate` and your own changes.** Settings you changed and plugins you
+added are carried into the new release automatically. Only when the release
+changes the same lines as you did, you are asked first: going on installs the
+release as published, and your version stays stored as a generation
+(`:IDESwitch` returns to it). `:IDEUpdate` starts from a pinned state, so
+`:IDEPin` or `:IDERollback` any unpinned changes first.
 
-`:IDEDoctor` shows the state and why, the generation in effect, and recent
-history (`records/history.tsv`).
+**The `:IDEUpdateUnsafe` checklist.** `Space` ticks the item under the cursor,
+`a` ticks all, `n` none, `Enter` updates the ticked items, `q` cancels. Nothing
+is ticked at first; ticking a plugin also ticks the plugins it depends on.
+
+`:IDEDoctor` shows the release, the state and why, the generation in effect and
+recent history.
 
 - **Only pinned generations are exported.** `:IDEExport` skips a candidate or
   unpinned edits and says so; `:IDEPin` first to include them.
 - **Code and versions switch together.** A switch replaces `init.lua` and
   checks out that generation's Neovim, plugins and tools, then rebuilds the
   parsers, so any two stored generations can be switched safely.
-- To return to a Neovim proven earlier, use `:IDESwitch`; `:IDEUpdate <version>`
-  is for untested combinations.
 
 ### Moving to another machine
 
@@ -339,7 +308,6 @@ present). Either way the target gets the same Neovim, plugins and tools.
 | `<C-]>` | Go to definition (LSP, else tags) |
 | `<C-h>` `<C-j>` `<C-k>` `<C-l>` | Window left / down / up / right |
 | `<C-Left>`, `<C-Right>` | Window left / right (for terminals that eat `<C-h>`/`<C-l>`) |
-| `<BS>` | Vim's own: one character back; the text is untouched |
 | `<C-p>` | Find files |
 | `<C-\>` | Toggle floating terminal |
 | `<F2>` / `<F3>` | Previous / next buffer |
@@ -392,8 +360,7 @@ present). Either way the target gets the same Neovim, plugins and tools.
 | `,ch` | Switch between source and header (clangd) |
 
 `gr`, `gy` and `gI` open a picker when there are several results and jump
-straight there when there is one. `gi` is Vim's own (insert where you last left
-Insert mode).
+straight there when there is one.
 
 ### Insert, terminal and completion
 
@@ -468,7 +435,8 @@ dragging to use the terminal's own selection.
 | `:IDEDoctor` | Generation state and history; what is installed, where it came from (system / Mason / sandbox), and what is missing — with the command to fix it |
 | `:IDEInstall [lang… \| all]` | Provision languages now (no argument: the current buffer's language) |
 | `:IDEPrewarm [dir]` | Scan a directory and provision every language found in it |
-| `:IDEUpdate [--all \| vX.Y.Z]` | Try newer Neovim, plugins and tools as a candidate: chosen in a checklist, all of them, or only another Neovim ([Generations](#generations)) |
+| `:IDEUpdate [vX.Y.Z]` | Move to the newest (or the named) release of Super IDE as a candidate, keeping your own changes ([Generations](#generations)) |
+| `:IDEUpdateUnsafe [--all \| vX.Y.Z]` | Try upstream's newest Neovim, plugins and tools, unproven, as a candidate: chosen in a checklist, all of them, or only another Neovim |
 | `:IDEDiff` | What the live state changes against the generation in effect |
 | `:IDEPin` | Record the live state as a new generation |
 | `:IDERollback` | Return to the generation in effect |
@@ -481,8 +449,9 @@ dragging to use the terminal's own selection.
 | `:LspInfo` | Alias for `:checkhealth vim.lsp` |
 | `:Mason`, `:Lazy` | Package and plugin managers |
 
-From a terminal: `nvim -l init.lua install`, `nvim -l ~/.config/nvim/init.lua
-uninstall`, `nvim -l init.lua help`.
+From a terminal: `nvim -l init.lua install`, and with the installed file
+(`~/.config/nvim/init.lua`): `update [vX.Y.Z]` (the same as `:IDEUpdate`),
+`uninstall`, `help`.
 
 ```bash
 nvim --clean file.c               # stock Neovim: no configuration, no plugins
@@ -494,17 +463,11 @@ export EDITOR=nvim VISUAL=nvim    # in ~/.profile: crontab -e, sudoedit, … ope
 
 ## Languages
 
-Languages are described by **one table**, `LANGS` (section 8 of `init.lua`).
-When a buffer gets a filetype, the IDE looks up its row and, in the background:
-
-1. starts Tree-sitter highlighting if the parser is present, else builds it;
-2. checks each tool on `PATH` — **a tool you installed yourself always wins**;
-3. installs the missing ones through **Mason**, at the version in the `LOCK`
-   when it names one (the latest otherwise, pinned by your next `:IDEPin`);
-4. enables the language server as soon as its binary exists (it does not wait
-   for parsers).
-
-The statusline shows `⟳ name` during downloads; later opens cost nothing.
+The first time you open a file of a language, the IDE sets that language up in
+the background: syntax highlighting, language server, formatter. A tool you
+installed yourself always wins; the rest comes through **Mason**, at the version
+in the `LOCK`. The statusline shows `⟳ name` during downloads; later opens cost
+nothing.
 
 | Layer | Examples | Who provides it |
 |:--|:--|:--|
@@ -551,7 +514,7 @@ language. `debug = false` in `SETTINGS` disables debugging.
 
 ### Adding a language
 
-Add one row to `LANGS` — nothing else. For example, Zig:
+Add one row to the `LANGS` table in `init.lua`. For example, Zig:
 
 ```lua
 zig = {
@@ -590,18 +553,15 @@ The formatter then follows that file, not the editor's indentation settings.
 
 ## Plugins
 
-Pinned by the `LOCK`; `:IDEUpdate` proposes newer commits and `:IDEPin` records them.
+Pinned by the `LOCK`; a new release (`:IDEUpdate`) brings newer ones.
 
 | Area | Plugins |
 |:--|:--|
 | Look | NeoSolarized (dark), lualine, which-key, indent-blankline, rainbow-delimiters, nvim-web-devicons |
 | Finding | fzf-lua, neo-tree, oil, outline |
-| Language | nvim-lspconfig (definitions only), mason, nvim-treesitter (`main`), blink.cmp, LuaSnip, friendly-snippets, conform, neogen, nvim-autopairs, nvim-surround |
+| Language | nvim-lspconfig, mason, nvim-treesitter, blink.cmp, LuaSnip, friendly-snippets, conform, neogen, nvim-autopairs, nvim-surround |
 | Tools | toggleterm, vim-fugitive, gitsigns, persistence |
 | Debug | nvim-dap, nvim-dap-ui, nvim-nio |
-
-Built into Neovim 0.12 and used directly: the LSP client (`vim.lsp.config` /
-`vim.lsp.enable`), the undo tree, OSC 52, EditorConfig.
 
 ### Adding and removing plugins
 
@@ -637,6 +597,8 @@ The `SETTINGS` table near the top of `init.lua`:
 | `python_provider` | `false` | Enable only for legacy remote plugins that need pynvim |
 | `ui2` | `false` | Neovim 0.12's experimental message UI (removes "Press ENTER" prompts) |
 | `github` | `https://github.com` | Mirror prefix for plugins, Mason downloads and portable tools |
+| `github_raw` | `https://raw.githubusercontent.com` | Where `:IDEUpdate` downloads a release's `init.lua` from |
+| `repo` | `smartcub/nvim-super-ide` | The repository whose releases `:IDEUpdate` follows |
 | `neovim_releases` | `https://github.com/neovim/neovim/releases/download` | Where Neovim builds are downloaded from |
 | `node_dist` | `https://nodejs.org/dist` | Mirror for the portable Node.js |
 | `adoptium_api` | `https://api.adoptium.net` | Source of the portable JDK 21 |
@@ -659,10 +621,6 @@ the `LOCK` table by hand; `:IDEPin` writes it.
 
 (`XDG_CONFIG_HOME` and friends are honoured, as Neovim honours them.)
 
-Tool caches (npm, pip, wget, the tree-sitter CLI, clangd's system-header index)
-are redirected into these directories. Go's module cache and Cargo's registry
-stay with your toolchains.
-
 ### Your previous configuration
 
 On first install, existing Neovim directories are **renamed, never deleted**:
@@ -682,16 +640,14 @@ NVIM_APPNAME=nvim-orig nvim     # your previous configuration, plugins and histo
 ```
 
 If both `nvim` and `nvim-orig` exist, the installer stops instead of
-overwriting anything. A state directory containing only an empty `nvim.log` is
-not considered yours.
+overwriting anything.
 
 ### clangd's index
 
-clangd writes its index to `<project>/.cache/clangd`. The IDE makes
-`<project>/.cache` a **symlink** (Windows: **junction**) into
-`~/.cache/nvim/clangd-index/` and adds `/.cache` to `.git/info/exclude` (never
-committed). An existing real `.cache` is left alone; every link and line is
-recorded and undone on uninstall.
+In a C/C++ project the IDE makes `<project>/.cache` a link into
+`~/.cache/nvim/clangd-index/`, so clangd's index stays out of your project, and
+adds `/.cache` to `.git/info/exclude` (never committed). An existing real
+`.cache` is left alone; uninstalling removes the links.
 
 ---
 
@@ -701,10 +657,12 @@ Start with **`:IDEDoctor`**. Then:
 
 | Symptom | Cause and fix |
 |:--|:--|
-| `nvim` still starts another Neovim after installing | Open a new terminal (or `hash -r`). Linux: log in again if `~/.local/bin` was new. Windows: a system-wide Neovim comes first on `PATH`; remove it ([What the installer does](#what-the-installer-does)) |
+| `nvim` still starts another Neovim after installing | Open a new terminal (or `hash -r`). Linux: log in again if `~/.local/bin` was new. Windows: a system-wide Neovim comes first on `PATH`; remove it ([What installing changes](#what-installing-changes)) |
 | `install.ps1` "cannot be loaded because running scripts is disabled" | Start it with `powershell -ExecutionPolicy Bypass -File install.ps1` ([Local install](#local-install)) |
 | An install printed `Nvim: Caught deadly signal 'SIGINT'` | Expected after Ctrl+C; the install was reverted ([Cancelling](#cancelling)) |
 | `curl: (35) … SSL_ERROR_SYSCALL in connection to github.com:443`, or downloads that hang | GitHub cannot be reached from this network ([Network access](#network-access)) |
+| The install stops at apt's "Waiting for cache lock" | Ubuntu's automatic updates hold the package lock (common right after a fresh install); the script waits up to 10 minutes |
+| `:IDEUpdate` says "Unpinned changes" | It starts from a pinned state: `:IDEPin` keeps your changes, `:IDERollback` drops them; then run it again |
 | `install.sh` says "no terminal to ask on" | It runs without a terminal (CI, cron): add `--yes` |
 | The Neovim download fails with "GLIBC_2.xx not found" | This Linux is older than the official builds support; Ubuntu 22.04 or newer works |
 | `:IDEPin` says to restart first | A candidate's Neovim is in place but not yet running; restart, try it, then pin |
@@ -714,7 +672,7 @@ Start with **`:IDEDoctor`**. Then:
 | “the Mason registry could not be downloaded” | Mason reaches `api.github.com`. Check the network; `:MasonUpdate` retries |
 | A pinned tool version “is no longer available” | Its source dropped that version; the latest was installed instead. `:IDEPin` records it |
 | A finder key (`f`, `r`, `g`, `<C-p>` …) says “fzf could not be downloaded” | The finders need the `fzf` program. Check the network and press the key again, or install `fzf` with your package manager |
-| No syntax colours after a switch or update | Parsers are rebuilt for the new Neovim on the next start; this needs a C compiler and the `tree-sitter` CLI. `:IDESync` retries |
+| No syntax colours after a switch or update | Parsers are rebuilt for the new Neovim on the next start; this needs a C compiler. `:IDESync` retries |
 | No language server for C/C++ | clangd needs `compile_commands.json` (below). On Linux arm64 Mason has no clangd; the IDE offers `apt-get install clangd` |
 | `rust-analyzer` is “found” but does nothing | rustup's proxy exists without the component: `rustup component add rust-analyzer` |
 | Copy over SSH does not reach your laptop | Your terminal must support OSC 52; in tmux set `set -g set-clipboard on` |

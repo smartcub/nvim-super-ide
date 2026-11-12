@@ -10,10 +10,12 @@
 #               from the repository first. Options go after `sh -s --`:
 #               ... | sh -s -- --yes
 #
-#  Environment (both optional):
+#  Environment (all optional):
+#    SUPER_IDE_REF    what to download: a release tag such as v1.2.0, or a
+#                     branch (main, the default)
 #    SUPER_IDE_REPO   GitHub repository to download from (smartcub/nvim-super-ide)
-#    SUPER_IDE_BASE   full base URL instead, e.g. a mirror or a fork's branch
-#                     (https://raw.githubusercontent.com/$SUPER_IDE_REPO/main)
+#    SUPER_IDE_BASE   full base URL instead, e.g. a mirror
+#                     (https://raw.githubusercontent.com/$SUPER_IDE_REPO/$SUPER_IDE_REF)
 #
 #  What it does, in order:
 #    0. Piped from curl (no init.lua beside it): downloads init.lua,
@@ -115,7 +117,7 @@ trap 'exit 130' INT TERM HUP PIPE
 # the files. The test is on $0 itself, never on the current directory: an
 # unrelated init.lua there must not be installed by accident.
 REPO="${SUPER_IDE_REPO:-smartcub/nvim-super-ide}"
-BASE="${SUPER_IDE_BASE:-https://raw.githubusercontent.com/$REPO/main}"
+BASE="${SUPER_IDE_BASE:-https://raw.githubusercontent.com/$REPO/${SUPER_IDE_REF:-main}}"
 if [ -f "$0" ] && [ "$(basename "$0")" = install.sh ]; then
   HERE=$(cd "$(dirname "$0")" && pwd)
   [ -f "$HERE/init.lua" ] || die "init.lua not found beside this script ($HERE)"

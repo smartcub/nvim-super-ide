@@ -121,8 +121,12 @@ end
 -- ============================================================================
 -- The versions this file was proven with. :IDEPin rewrites the block between
 -- the two markers; edit it by hand only if you know why.
+-- `release` is the published Super IDE release this file is based on
+-- (major.feature.fix, tag v<release> in SETTINGS.repo). :IDEPin keeps it;
+-- :IDEUpdate uses it to find what you changed since, and moves it on.
 -- @@LOCK BEGIN
 local LOCK = {
+  release = "1.0.0",
   pinned = "2026-11-06",
   neovim = "v0.12.6",
   plugins = {
@@ -177,6 +181,8 @@ local SETTINGS = {
   -- Download sources. Point these at mirrors when GitHub or nodejs.org are
   -- slow or unreachable.
   github          = "https://github.com",
+  github_raw      = "https://raw.githubusercontent.com",   -- single files of a repository
+  repo            = "smartcub/nvim-super-ide",             -- where :IDEUpdate finds releases
   neovim_releases = "https://github.com/neovim/neovim/releases/download",
   node_dist       = "https://nodejs.org/dist",
   adoptium_api    = "https://api.adoptium.net",
@@ -587,6 +593,13 @@ do
     end
   end
 
+  -- Order for table.sort: is version tag x older than y? (vX.Y.Z, by number)
+  local function older_tag(x, y)
+    local a, b = parse_tag(x), parse_tag(y)
+    for i = 1, 3 do if a[i] ~= b[i] then return a[i] < b[i] end end
+    return false
+  end
+
   -- Release tags >= 0.12, newest last, read from git (no API rate limit).
   function LC.release_tags()
     local r = vim.system({ "git", "ls-remote", "--tags", "--refs", SETTINGS.github .. "/neovim/neovim" }, { text = true }):wait()
@@ -595,11 +608,7 @@ do
       local v = parse_tag(tag)
       if v[1] > 0 or v[2] >= 12 then tags[#tags + 1] = tag end
     end
-    table.sort(tags, function(x, y)
-      local a, b = parse_tag(x), parse_tag(y)
-      for i = 1, 3 do if a[i] ~= b[i] then return a[i] < b[i] end end
-      return false
-    end)
+    table.sort(tags, older_tag)
     return tags
   end
 
@@ -628,7 +637,10 @@ do
   -- Deterministic text: sorted keys, one entry per line, so a diff between
   -- two generations shows exactly what moved.
   function LC.lock_render(lk)
-    local L = { "local LOCK = {", ("  pinned = %q,"):format(lk.pinned or ""), ("  neovim = %q,"):format(lk.neovim) }
+    local L = { "local LOCK = {" }
+    if lk.release then L[#L + 1] = ("  release = %q,"):format(lk.release) end
+    L[#L + 1] = ("  pinned = %q,"):format(lk.pinned or "")
+    L[#L + 1] = ("  neovim = %q,"):format(lk.neovim)
     local function block(name, tbl, fmt)
       local keys = vim.tbl_keys(tbl or {})
       table.sort(keys)
@@ -709,7 +721,10 @@ do
   function LC.switch(name)
     local text = LC.gen_text(name) or fail("no such generation: " .. tostring(name))
     local lk = LC.lock_from_text(text) or fail(name .. " has no readable LOCK")
-    keep_rejected(read_file(FILE.init))
+    -- A release being tried wrote init.lua itself (LC.release_update); what
+    -- the user had before it is the generation it started from.
+    local cand = json_read(FILE.candidate)
+    if not (cand and cand.scope == "release") then keep_rejected(read_file(FILE.init)) end
     local before = LC.current_tag()
     LC.fetch_neovim(lk.neovim)
     LC.set_current(lk.neovim)
@@ -1042,7 +1057,7 @@ do
       local ok, err = pcall(step[2])
       if not ok then LC.warn("Could not undo " .. step[1] .. ": " .. tostring(err)) end
     end
-    if undo then LC.say("Rolled back: this install changed nothing.") end
+    if undo then LC.say("Rolled back: nothing was changed.") end
     journal = nil
     if #pkgs > 0 then
       LC.say("System packages installed by this run were kept (other programs may use them):")
@@ -1103,12 +1118,228 @@ do
     end
   end
 
+  -- Releases of Super IDE itself ------------------------------------------------------------
+  -- :IDEUpdate and `nvim -l init.lua update` move an install to a published
+  -- release: the init.lua at tag vX.Y.Z of SETTINGS.repo, proven as a whole.
+  -- What the user changed in their own init.lua travels along by a three-way
+  -- merge, as git merges two branches:
+  --   base    the release the user's file is based on (its LOCK.release)
+  --   mine    the user's init.lua (pinned: equal to the generation in effect)
+  --   theirs  the release to move to
+  -- Outside the LOCK block, `git merge-file` applies base→mine and base→theirs
+  -- together; changes to different places merge, changes to the same lines
+  -- are a conflict. The LOCK block is merged by meaning instead (merge_locks):
+  -- as text its neighbouring commit lines would conflict almost every time.
+  -- The result is staged as a candidate (try it, then :IDEPin or :IDERollback).
+
+  -- Published releases (tags vX.Y.Z of SETTINGS.repo), oldest first.
+  function LC.ide_releases()
+    local url = SETTINGS.github .. "/" .. SETTINGS.repo
+    local r = vim.system({ "git", "ls-remote", "--tags", "--refs", url }, { text = true }):wait()
+    if r.code ~= 0 then fail("cannot list the releases of " .. url .. ": " .. vim.trim(r.stderr or "")) end
+    local tags = {}
+    for tag in (r.stdout or ""):gmatch("refs/tags/(v%d+%.%d+%.%d+)\n") do tags[#tags + 1] = tag end
+    table.sort(tags, older_tag)
+    return tags
+  end
+
+  -- The init.lua published as release `tag`; nil and the reason when it
+  -- cannot be downloaded.
+  local function release_text(tag)
+    local url = ("%s/%s/%s/init.lua"):format(SETTINGS.github_raw, SETTINGS.repo, tag)
+    local r = vim.system({ "curl", "-fsSL", "--retry", "2", url }, { text = true }):wait()
+    if r.code ~= 0 then return nil, url .. ": " .. vim.trim(r.stderr or "") end
+    return norm(r.stdout)
+  end
+
+  -- An init.lua with the contents of its LOCK block left out.
+  local function body_of(text)
+    local s, e = lock_span(text)
+    return s and (text:sub(1, s - 1) .. "local LOCK = {}" .. text:sub(e)) or nil
+  end
+
+  -- The release's LOCK (versions proven together), plus what the user added
+  -- on top of their base: plugins, tools and languages the base did not have.
+  -- A plugin the user removed (in the base, not in theirs) stays removed.
+  local function merge_locks(base, mine, theirs)
+    local out = vim.deepcopy(theirs)
+    for _, key in ipairs({ "plugins", "tools" }) do
+      out[key] = out[key] or {}
+      for name, v in pairs(mine[key] or {}) do
+        if (base[key] or {})[name] == nil and out[key][name] == nil then out[key][name] = v end
+      end
+    end
+    for name in pairs(base.plugins or {}) do
+      if (mine.plugins or {})[name] == nil then out.plugins[name] = nil end
+    end
+    out.langs = out.langs or {}
+    for _, id in ipairs(mine.langs or {}) do
+      if not vim.tbl_contains(out.langs, id) then out.langs[#out.langs + 1] = id end
+    end
+    return out
+  end
+
+  -- Three-way merge of whole texts; nil when the two sides conflict.
+  -- `git merge-file -p mine base theirs` prints the merged text and exits 0
+  -- when clean, with the number of conflicts otherwise.
+  local function merge3(base, mine, theirs)
+    local dir = uv.fs_mkdtemp(joinpath(uv.os_tmpdir(), "super-ide-merge-XXXXXX"))
+    if not dir then return nil end
+    local f = { mine = joinpath(dir, "mine.lua"), base = joinpath(dir, "base.lua"), theirs = joinpath(dir, "theirs.lua") }
+    write_file(f.mine, mine); write_file(f.base, base); write_file(f.theirs, theirs)
+    local r = vim.system({ "git", "merge-file", "-p", f.mine, f.base, f.theirs }, { text = true }):wait()
+    rm(dir)
+    return r.code == 0 and r.stdout or nil
+  end
+
+  -- Work out a move to release `want` (nil: the newest) without changing
+  -- anything. Returns { current = true, tag } when already there, else a plan:
+  --   tag, from, to   the release tag, and the versions before and after
+  --   text            the init.lua to install
+  --   status          "clean"    the user changed nothing outside the LOCK
+  --                   "merged"   the user's changes were merged in
+  --                   "replace"  they could not be: text is the release as
+  --                              published, `why` says what stood in the way
+  function LC.release_plan(want)
+    if not lexists(FILE.marker) then fail("Super IDE is not installed in " .. DIR.config) end
+    if lexists(FILE.candidate) then fail("a candidate is being tried: :IDEPin keeps it, :IDERollback drops it") end
+    local gen = LC.gen_current() or fail("no generation stored yet: :IDEPin first")
+    local mine = norm(read_file(FILE.init) or "")
+    if mine ~= LC.gen_text(gen) then fail("init.lua has unpinned edits: :IDEPin or :IDERollback first") end
+    local mine_lk = LC.lock_from_text(mine) or fail("init.lua has no readable LOCK")
+
+    local tags = LC.ide_releases()
+    if #tags == 0 then fail(SETTINGS.repo .. " has not published a release yet") end
+    local tag = want or tags[#tags]
+    if not vim.tbl_contains(tags, tag) then fail(tag .. " is not a release of " .. SETTINGS.repo) end
+    local have = mine_lk.release
+    if have and "v" .. have == tag then return { current = true, tag = tag } end
+
+    local theirs, err = release_text(tag)
+    if not theirs then fail("download failed: " .. err) end
+    local their_lk = LC.lock_from_text(theirs) or fail("the file published as " .. tag .. " has no LOCK block")
+    -- A tag whose file names another release was published by mistake.
+    if "v" .. tostring(their_lk.release) ~= tag then
+      fail(("the file published as %s says release %s; not installing it"):format(tag, tostring(their_lk.release)))
+    end
+    local plan = { tag = tag, from = have, to = their_lk.release, base_gen = gen,
+      prev = mine_lk.neovim, new = their_lk.neovim, text = theirs, status = "replace" }
+
+    local base = have and vim.tbl_contains(tags, "v" .. have) and release_text("v" .. have) or nil
+    local base_lk = base and LC.lock_from_text(base)
+    if not base_lk then
+      plan.why = have and ("release " .. have .. ", which this install is based on, cannot be downloaded")
+        or "this install does not say which release it is based on"
+      return plan
+    end
+    local lk = merge_locks(base_lk, mine_lk, their_lk)
+    if body_of(mine) == body_of(base) then
+      plan.text, plan.status = LC.lock_replace(theirs, lk), "clean"
+      return plan
+    end
+    local merged = merge3(body_of(base), body_of(mine), body_of(theirs))
+    if not merged then
+      plan.why = "your changes and the release change the same lines"
+    elseif not loadstring(merged, "=merged") then   -- compiles it, runs nothing
+      plan.why = "merging your changes with the release does not give valid Lua"
+    else
+      plan.text, plan.status = LC.lock_replace(merged, lk), "merged"
+    end
+    return plan
+  end
+
+  -- The question for a plan whose status is "replace".
+  function LC.release_question(plan)
+    return ("Release %s cannot keep your changes to init.lua: %s.\n"
+      .. "Replace them with the release as published? They stay stored as generation\n"
+      .. "%s (:IDESwitch returns to it)."):format(plan.to, plan.why, plan.base_gen)
+  end
+
+  -- Put a plan in place as a candidate: its Neovim, its init.lua, its plugin
+  -- lock. :IDESync, run by the caller under the new file, does the rest.
+  -- candidate.json goes first: from then on :IDERollback can undo the rest.
+  function LC.release_stage(plan)
+    local lk = LC.lock_from_text(plan.text) or fail("the new init.lua has no readable LOCK")
+    LC.fetch_neovim(lk.neovim)
+    json_write(FILE.candidate, { base = plan.base_gen, prev = plan.prev, new = lk.neovim,
+      scope = "release", from = plan.from, to = plan.to, how = plan.status })
+    if lk.neovim ~= LC.current_tag() then
+      LC.set_current(lk.neovim)
+      local p = json_read(FILE.pending) or {}
+      p.parsers = true   -- parsers are compiled against one Neovim
+      json_write(FILE.pending, p)
+    end
+    write_atomic(FILE.init, plan.text)
+    json_write(FILE.lockfile, lk.plugins)
+    LC.history("update", ("release %s → %s (candidate, %s)"):format(plan.from or "?", plan.to, plan.status))
+  end
+
+  -- `nvim -l init.lua update [vX.Y.Z]`: the same from a terminal. Ctrl+C or an
+  -- error puts everything back (see "Cancel and roll back").
+  function LC.update(o)
+    LC.say("Looking for releases of " .. SETTINGS.repo .. " …")
+    local plan = LC.release_plan(o.release)
+    if plan.current then return LC.say("Already on release " .. plan.tag:sub(2) .. ".") end
+    LC.say(("Release %s → %s"):format(plan.from or "?", plan.to))
+    if plan.status == "replace" and not LC.ask(LC.release_question(plan), false) then
+      return LC.say("Nothing changed.")
+    end
+    local restore, before_tag = snapshot_files(), LC.current_tag()
+    begin_journal({})
+    on_undo("the release update", function()
+      if before_tag and before_tag ~= LC.current_tag() then LC.set_current(before_tag) end
+      restore()   -- init.lua, plugin lock, candidate and pending records
+      LC.sync_here(true)
+    end)
+    LC.release_stage(plan)
+    LC.sync_here()
+    end_journal()
+    LC.say(({ clean = "Release %s is in place as a candidate.",
+      merged = "Release %s is in place as a candidate, with your changes to init.lua merged in.",
+      replace = "Release %s is in place as a candidate, as published." })[plan.status]:format(plan.to))
+    LC.say("Start nvim and try it (:IDEDiff shows what changed); then :IDEPin keeps it, :IDERollback drops it.")
+  end
+
+  -- A framed warning on the terminal, bold red where colours are safe (a
+  -- terminal, and on Windows only Windows Terminal: the old console would
+  -- print the escape codes as text).
+  local function banner(lines)
+    local red, off = "", ""
+    if uv.guess_handle(1) == "tty" and (not IS_WIN or vim.env.WT_SESSION) then red, off = "\27[1;31m", "\27[0m" end
+    local width = 0
+    for _, l in ipairs(lines) do width = math.max(width, #l) end
+    local bar = ("#"):rep(width + 6)
+    io.write("\n", red, bar, "\n")
+    for _, l in ipairs(lines) do io.write("#  ", l, (" "):rep(width - #l), "  #\n") end
+    io.write(bar, off, "\n\n")
+    io.flush()
+  end
+
   -- Install ---------------------------------------------------------------------------------
   function LC.install(o)
     local src = vim.fs.normalize(vim.fn.fnamemodify(_G.arg[0], ":p"))
     local text = norm(read_file(src) or fail("cannot read " .. src))
     local lk = LC.lock_from_text(text) or fail(src .. " has no LOCK block; is it a Super IDE init.lua?")
     LC.say(("Neovim Super IDE · Neovim %s · %s/%s"):format(lk.neovim, OS, ARCH))
+    -- Already installed, and this is another file than the live generation:
+    -- installing it replaces that generation as it is, with nothing merged.
+    -- Say so loudly and ask (--yes: go on), before anything is touched.
+    local live = lexists(FILE.marker) and LC.gen_current()
+    if live and LC.gen_text(live) ~= text then
+      banner({
+        "WARNING: Super IDE is already installed on this machine.",
+        "",
+        "Going on replaces the live init.lua with the file being installed, as it is.",
+        "Changes you made to your own init.lua are NOT merged into it",
+        "(:IDEUpdate inside the IDE moves to a new release and merges them).",
+        "",
+        "The current generation stays stored; :IDESwitch returns to it:",
+        "  " .. live,
+      })
+      if not LC.yes and not LC.ask("Replace the live generation with this file?", false) then
+        return LC.say("Nothing changed.")
+      end
+    end
     LC.say("Ctrl+C cancels at any point and puts everything back.")
 
     -- 1. Look before touching anything.
@@ -1427,7 +1658,13 @@ Neovim Super IDE — script commands (README.md is the full guide)
 
   nvim -l init.lua install [--yes] [--git-editor]
       Install Super IDE from this file. When it is already installed, this
-      file is imported as a new generation and becomes the live one.
+      file replaces the live generation after a warning and a question (the
+      generations stored so far are kept).
+
+  nvim -l ~/.config/nvim/init.lua update [vX.Y.Z]
+      Move to the newest published release of Super IDE (or to the one named)
+      as a candidate; your own changes to init.lua are merged in. The same as
+      :IDEUpdate inside the IDE.
 
   nvim -l ~/.config/nvim/init.lua uninstall [--keep-state | --discard-state] [--yes]
       Remove Super IDE and bring back the configuration found before install.
@@ -1456,6 +1693,7 @@ Neovim Super IDE — script commands (README.md is the full guide)
       elseif x == "--target" then i = i + 1; o.target = a[i]
       elseif x == "--log" then i = i + 1; o.log = a[i]
       elseif x == "--archive" then i = i + 1; o.archive = a[i]
+      elseif o.cmd == "update" and x:match("^v%d+%.%d+%.%d+$") then o.release = x
       else LC.fail("unknown option " .. x .. " (see: nvim -l init.lua help)") end
       i = i + 1
     end
@@ -1471,6 +1709,8 @@ Neovim Super IDE — script commands (README.md is the full guide)
     LC.archive = o.archive and vim.fn.fnamemodify(o.archive, ":p") or nil
     if o.cmd == "install" then
       LC.install(o)
+    elseif o.cmd == "update" then
+      LC.update(o)
     elseif o.cmd == "uninstall" then
       if o.relocated then return LC.uninstall(o) end   -- the handed-over half
       if not LC.lexists(FILE.marker) then LC.fail("Super IDE is not installed in " .. DIR.config) end
@@ -1492,9 +1732,9 @@ Neovim Super IDE — script commands (README.md is the full guide)
       local f = io.open(LC.log, "a")
       if f then f:write("xx  ", tostring(err), "\n"); f:close() end
     end
-    -- An install that stopped halfway puts back what it changed (section 3,
-    -- "Cancel and roll back"); for any other command this does nothing.
-    LC.rollback("Installation stopped.")
+    -- An install or update that stopped halfway puts back what it changed
+    -- (section 3, "Cancel and roll back"); for other commands this does nothing.
+    LC.rollback("Stopped.")
     os.exit(1)
   end
   os.exit(0)   -- leave here: none of the editor code below runs in script mode
@@ -3825,8 +4065,13 @@ end
 local function generation_state()
   local cand = LC.json_read(FILE.candidate)
   if cand then
-    -- scope: "all" (--all), "selected" (chosen in the checklist), "neovim"
-    -- (:IDEUpdate vX.Y.Z).
+    -- scope: "release" (:IDEUpdate), or from :IDEUpdateUnsafe "all" (--all),
+    -- "selected" (chosen in the checklist), "neovim" (vX.Y.Z).
+    if cand.scope == "release" then
+      return "candidate", { ("trying release %s (was %s); %s"):format(cand.to or "?", cand.from or "unknown",
+        ({ clean = "you had no changes of your own", merged = "your changes to init.lua are merged in",
+          replace = "your changes to init.lua were replaced" })[cand.how] or "") }
+    end
     local nvim = cand.new ~= cand.prev and (", Neovim %s → %s"):format(cand.prev or "?", cand.new or "?") or ""
     return "candidate", { cand.scope == "neovim" and ("trying Neovim %s; was %s"):format(cand.new or "?", cand.prev or "?")
       or ("trying %s update(s)%s"):format(cand.scope == "all" and ("all " .. (cand.count or "")) or (cand.count or "?") .. " selected", nvim) }
@@ -3974,10 +4219,12 @@ local function go_to_generation(name, action)
   float_term(sync, action .. " → " .. name, done)
 end
 
--- :IDEUpdate [--all | vX.Y.Z] — try something newer as a candidate generation.
+-- :IDEUpdateUnsafe [--all | vX.Y.Z] — try upstream's newest as a candidate.
 --   (no argument)  check what is newer, then choose in a checklist
 --   --all          take everything newer, without asking
 --   vX.Y.Z         change only Neovim, to that release
+-- "Unsafe": these versions come straight from each project and nobody has
+-- proven them together, unlike a release of Super IDE (:IDEUpdate, below).
 -- Whatever is taken becomes a candidate: restart, try it (:IDEDiff shows
 -- what changed), then :IDEPin keeps it or :IDERollback drops it.
 local tag_cache
@@ -4213,7 +4460,7 @@ local function choose_updates(items)
 end
 
 -- cmd.args is the whole argument text ("" when none was given).
-vim.api.nvim_create_user_command("IDEUpdate", function(cmd)
+vim.api.nvim_create_user_command("IDEUpdateUnsafe", function(cmd)
   if LC.lexists(FILE.candidate) then
     return notify("A candidate is being tried: :IDEPin keeps it, :IDERollback drops it.", vim.log.levels.WARN)
   end
@@ -4250,16 +4497,66 @@ vim.api.nvim_create_user_command("IDEUpdate", function(cmd)
     if HEADLESS then
       -- No window to choose in: list what is newer, and how to take it.
       for _, it in ipairs(items) do print(("  %-28s %s"):format(it.name, it.detail)) end
-      return print(":IDEUpdate --all takes all of these.")
+      return print(":IDEUpdateUnsafe --all takes all of these.")
     end
     choose_updates(items)
   end)
   if not ok then busy("update", false); notify("Update failed: " .. tostring(err), vim.log.levels.ERROR) end
 end, {
-  nargs = "?", desc = "Try newer Neovim, plugins and tools as a candidate: choose, --all, or one Neovim version",
+  nargs = "?", desc = "Try upstream's newest Neovim, plugins and tools (unproven) as a candidate: choose, --all, or one Neovim version",
   -- <Tab> offers --all, then the release tags, newest first. deepcopy:
   -- reverse() changes the list in place, and the cached one must stay in order.
   complete = function() return vim.list_extend({ "--all" }, vim.fn.reverse(vim.deepcopy(release_tags()))) end,
+})
+
+-- :IDEUpdate [vX.Y.Z] — move to a published release of Super IDE (the newest,
+-- or the one named) as a candidate. A release is one init.lua whose Neovim,
+-- plugins and tools were proven together; your own changes to init.lua are
+-- merged into it (LC.release_plan, section 3). If they cannot be, you are
+-- asked before the release replaces them. Then: restart, try it, :IDEDiff,
+-- and :IDEPin or :IDERollback, as with any candidate.
+local ide_tag_cache
+local function ide_releases()
+  ide_tag_cache = ide_tag_cache or LC.ide_releases()
+  return ide_tag_cache
+end
+
+vim.api.nvim_create_user_command("IDEUpdate", function(cmd)
+  local state, why = generation_state()
+  if state == "candidate" then
+    return notify("A candidate is being tried: :IDEPin keeps it, :IDERollback drops it.", vim.log.levels.WARN)
+  elseif state ~= "pinned" then
+    -- The merge starts from a pinned state, so that :IDERollback can return
+    -- to exactly what is running now.
+    return notify(("Unpinned changes (%s): :IDEPin or :IDERollback first."):format(table.concat(why, "; ")), vim.log.levels.WARN)
+  end
+  local want = cmd.args ~= "" and cmd.args or nil
+  LC.say("Looking for releases of " .. SETTINGS.repo .. " …")
+  ide_tag_cache = nil   -- a release may have been published since the last look
+  local ok, err = pcall(function()
+    local plan = LC.release_plan(want)
+    if plan.current then return notify("Already on release " .. plan.tag:sub(2) .. ".") end
+    if plan.status == "replace" and not LC.ask(LC.release_question(plan), false) then
+      return notify("Nothing changed.")
+    end
+    LC.release_stage(plan)
+    -- The rest runs under the new file: a separate headless Neovim.
+    local sync = { LC.current_exe(), "--headless", "+IDESync", "+qa" }
+    local function done(code)
+      notify(("Release %s is ready as a candidate%s. Restart to try it; :IDEDiff, then :IDEPin or :IDERollback."):format(plan.to,
+        code == 0 and "" or " (sync reported problems)"), code == 0 and vim.log.levels.INFO or vim.log.levels.WARN)
+    end
+    if HEADLESS then return done(vim.system(sync):wait().code) end
+    float_term(sync, ("release %s → %s"):format(plan.from or "?", plan.to), done)
+  end)
+  if not ok then notify("Update failed: " .. tostring(err), vim.log.levels.ERROR) end
+end, {
+  nargs = "?", desc = "Move to a published release of Super IDE (newest, or vX.Y.Z) as a candidate",
+  -- <Tab> offers the releases, newest first (deepcopy: reverse() works in place).
+  complete = function()
+    local ok, tags = pcall(ide_releases)
+    return ok and vim.fn.reverse(vim.deepcopy(tags)) or {}
+  end,
 })
 
 -- :IDEPin — the live state is proven: write it into init.lua and store it.
@@ -4268,15 +4565,27 @@ vim.api.nvim_create_user_command("IDEPin", function()
   if cand and cand.new and LC.running_tag() ~= cand.new then
     return notify(("Restart Neovim first: the candidate (%s) is not the one running."):format(cand.new), vim.log.levels.WARN)
   end
+  -- A release candidate replaced init.lua itself; this session must be one
+  -- started from that file (its LOCK.release), or it would pin old specs.
+  if cand and cand.scope == "release" and LOCK.release ~= cand.to then
+    return notify(("Restart Neovim first: release %s is in place but not yet running."):format(cand.to), vim.log.levels.WARN)
+  end
   local state = generation_state()
   if state == "pinned" then return notify("Nothing new to pin: the live state is generation " .. LC.gen_current() .. ".") end
   local ok, err = pcall(function()
     local lk = live_lock()
-    local text = LC.lock_replace(LC.read_file(FILE.init), lk)
+    local file = LC.read_file(FILE.init)
+    -- The release this file is based on does not change by pinning.
+    lk.release = (LC.lock_from_text(file) or {}).release
+    local text = LC.lock_replace(file, lk)
     LC.write_atomic(FILE.init, text)
     local name = LC.gen_add(text)
     os.remove(FILE.candidate)
     LC.prune_builds({ [lk.neovim] = true })
+    -- Directories of plugins no longer declared (a deleted spec, debug = false)
+    -- are not part of what was just pinned: remove them now, as :IDESync
+    -- would, or the state would still read "unpinned" right after this pin.
+    if undeclared_plugins() > 0 then pcall(function() require("lazy.manage").clean({ wait = true, show = false }) end) end
     LC.history("pin", name)
     LOCK = lk   -- this session now agrees with the file
     notify(("Pinned generation %s: Neovim %s, %d plugins, %d tools, %d languages."):format(
@@ -4500,7 +4809,7 @@ vim.api.nvim_create_user_command("IDEDoctor", function()
   local L = {}
   local function add(s) L[#L + 1] = s end
   local function mark(ok) return ok and "✓" or "✗" end
-  add(("Super IDE doctor — Neovim %s · %s/%s · %s"):format(LC.running_tag(), OS, ARCH, vim.v.progpath))
+  add(("Super IDE %s doctor — Neovim %s · %s/%s · %s"):format(LOCK.release or "(no release)", LC.running_tag(), OS, ARCH, vim.v.progpath))
   add("")
   local state, why = generation_state()
   add("Generation")
@@ -4587,7 +4896,7 @@ end, { desc = "Report what the IDE has, lacks, and where things came from" })
 -- :IDEDiff — what the live state changes against the generation in effect
 -- (its LOCK and its init.lua): the Neovim release, each plugin's commits with
 -- their subjects, tool versions, languages newly in use, and the text of
--- init.lua. It answers "what did this :IDEUpdate bring?" before :IDEPin or
+-- init.lua. It answers "what did this update bring?" before :IDEPin or
 -- :IDERollback, and does the same for unpinned changes made by hand.
 -- Commit subjects come from the plugins' local git history (an update has
 -- already fetched them), so no network is needed.
@@ -4623,6 +4932,12 @@ end
 vim.api.nvim_create_user_command("IDEDiff", function()
   local state = generation_state()   -- also refreshes lazy.nvim's lockfile
   local gen = LC.gen_current()
+  local cand = LC.json_read(FILE.candidate)
+  -- Compare with the LOCK of the generation in effect. That is the LOCK this
+  -- session loaded, except while a release is tried: then init.lua, LOCK
+  -- included, is already the new one. (This local hides the global LOCK
+  -- for the rest of the function.)
+  local LOCK = gen and LC.lock_from_text(LC.gen_text(gen)) or LOCK
   local L, changes = {}, 0
   local function add(s) L[#L + 1] = s end
   local short = function(c) return c and c:sub(1, 7) or "?" end
@@ -4630,7 +4945,12 @@ vim.api.nvim_create_user_command("IDEDiff", function()
     ({ pinned = "pinned", modified = "unpinned changes", candidate = "candidate" })[state]))
   add("")
 
-  -- Neovim: the build in place (a candidate's, once :IDEUpdate has run).
+  if cand and cand.scope == "release" then
+    add(("Super IDE  release %s → %s"):format(cand.from or "unknown", cand.to))
+    add("")
+  end
+
+  -- Neovim: the build in place (a candidate's, once an update has run).
   local tag = LC.current_tag() or LC.running_tag()
   if tag ~= LOCK.neovim then
     changes = changes + 1
@@ -4702,9 +5022,19 @@ vim.api.nvim_create_user_command("IDEDiff", function()
   local text = LC.norm(LC.read_file(FILE.init) or "")
   if stored and stored ~= text then
     changes = changes + 1
-    add("init.lua  edited since the generation was stored")
-    for _, line in ipairs(vim.split(vim.text.diff(stored, text, { ctxlen = 2 }), "\n", { trimempty = true })) do
-      add("  " .. line)
+    local diff = vim.split(vim.text.diff(stored, text, { ctxlen = 2 }), "\n", { trimempty = true })
+    if cand and cand.scope == "release" then
+      -- A release changes init.lua throughout: count, do not list.
+      local plus, minus = 0, 0
+      for _, line in ipairs(diff) do
+        if line:match("^%+") then plus = plus + 1 elseif line:match("^%-") then minus = minus + 1 end
+      end
+      add(("init.lua  the release's file: %d lines added, %d removed; %s"):format(plus, minus,
+        ({ clean = "you had no changes of your own", merged = "your own changes are merged in",
+          replace = "your own changes were replaced (they are in generation " .. tostring(gen) .. ")" })[cand.how] or ""))
+    else
+      add("init.lua  edited since the generation was stored")
+      for _, line in ipairs(diff) do add("  " .. line) end
     end
     add("")
   end

@@ -14,10 +14,12 @@
  `irm | iex` cannot pass options; with options, use:
      & ([scriptblock]::Create((irm <the same URL>))) --yes
 
- Environment (both optional):
+ Environment (all optional):
+   SUPER_IDE_REF    what to download: a release tag such as v1.2.0, or a
+                    branch (main, the default)
    SUPER_IDE_REPO   GitHub repository to download from (smartcub/nvim-super-ide)
-   SUPER_IDE_BASE   full base URL instead, e.g. a mirror or a fork's branch
-                    (https://raw.githubusercontent.com/$SUPER_IDE_REPO/main)
+   SUPER_IDE_BASE   full base URL instead, e.g. a mirror
+                    (https://raw.githubusercontent.com/$SUPER_IDE_REPO/$SUPER_IDE_REF)
 
  What it does, in order:
    0. Started without init.lua beside it: downloads init.lua, install.sh and
@@ -106,7 +108,8 @@ $SuperIdeFile = $MyInvocation.MyCommand.Path
     # this script's own path, never on the current folder, so an unrelated
     # init.lua there is never installed by accident.
     $Repo = if ($env:SUPER_IDE_REPO) { $env:SUPER_IDE_REPO } else { 'smartcub/nvim-super-ide' }
-    $Base = if ($env:SUPER_IDE_BASE) { $env:SUPER_IDE_BASE } else { "https://raw.githubusercontent.com/$Repo/main" }
+    $Ref  = if ($env:SUPER_IDE_REF) { $env:SUPER_IDE_REF } else { 'main' }
+    $Base = if ($env:SUPER_IDE_BASE) { $env:SUPER_IDE_BASE } else { "https://raw.githubusercontent.com/$Repo/$Ref" }
     if ($SuperIdeFile -and (Split-Path -Leaf $SuperIdeFile) -eq 'install.ps1') {
       $Here = Split-Path -Parent $SuperIdeFile
       if (-not (Test-Path (Join-Path $Here 'init.lua'))) { Die "init.lua not found beside this script ($Here)" }
