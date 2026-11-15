@@ -2976,6 +2976,10 @@ local function ensure_lang(id, opts)
     end
 
     notify(("Preparing %s tooling… (first use only)"):format(L.label))
+    -- The same on the statusline until the end: other plugins' progress
+    -- messages soon replace the line above, but nothing overwrites ours.
+    local mark = ("Preparing %s…"):format(L.label)
+    busy(mark, true)
     -- Two independent tracks: the language server starts the moment its
     -- tools are in place, without waiting for parsers to download and build.
     local jobs = {}
@@ -3015,6 +3019,7 @@ local function ensure_lang(id, opts)
             if not r.ok and r.why then table.insert(problems, r.why) end
           end
         end
+        busy(mark, false)
         P.ready[id] = true
         P.failed[id] = #problems > 0 and problems or nil
         if #problems == 0 then
