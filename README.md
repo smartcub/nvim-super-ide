@@ -36,7 +36,7 @@ uninstalling restores it.
 # 1. Install (Windows: see Online install)
 curl -fsSL https://raw.githubusercontent.com/smartcub/nvim-super-ide/main/install.sh | sh
 
-# 2. Open a new terminal, start the IDE and check it
+# 2. Open a new terminal (or run: exec $SHELL -l), start the IDE and check it
 nvim            # then  :IDEDoctor
 ```
 
@@ -66,8 +66,9 @@ curl -fsSL https://raw.githubusercontent.com/smartcub/nvim-super-ide/main/instal
 irm https://raw.githubusercontent.com/smartcub/nvim-super-ide/main/install.ps1 | iex
 ```
 
-Then **open a new terminal** and run `nvim`; `:IDEDoctor` reports what is
-installed and what is missing.
+Then **open a new terminal** (or run `exec $SHELL -l`) and run `nvim`;
+`:IDEDoctor` reports what is installed and what is missing. On Windows the
+same PowerShell window already finds `nvim`.
 
 ### Local install
 
@@ -169,9 +170,13 @@ distribution's package mirror. Mirrors are configured in [Settings](#settings).
 - **Your existing Neovim configuration** is renamed to `nvim-orig` and still
   runs ([Files and directories](#files-and-directories)).
 - **The `nvim` command** starts Super IDE:
-  - Linux / macOS: the link `~/.local/bin/nvim`. On Ubuntu, log in again if
-    `~/.local/bin` is new; on macOS the installer offers to add a marked line
-    to `~/.zprofile`.
+  - Linux / macOS: the link `~/.local/bin/nvim`. If your shell does not put
+    `~/.local/bin` on `PATH`, the installer asks to add one marked line to
+    its startup file: zsh `~/.zshenv` (macOS: `~/.zprofile`); bash the login
+    file it reads (`~/.bash_profile`, `~/.bash_login` or `~/.profile`) and
+    `~/.bashrc`. It checks with your login shell itself, so a file that
+    already does this is left alone. For fish and other shells it tells you
+    what to add.
   - Windows: an entry in the user `PATH`. A system-wide Neovim (winget's
     default) is found first; remove it (`winget uninstall Neovim.Neovim`) or
     start Super IDE by its full path.
@@ -208,8 +213,8 @@ nvim -l ~/.config/nvim/init.lua uninstall      # from a terminal
 keeps the state.
 
 - **Restored**: your previous configuration (`nvim-orig` back to `nvim`), git's
-  `core.editor`, your `PATH` / `~/.zprofile`, and the clangd links inside your
-  projects.
+  `core.editor`, your `PATH` and shell startup files, and the clangd links
+  inside your projects.
 - **Removed**: the `nvim` command, the Neovim builds, the cache.
 - **Kept or deleted, as you answer**: Super IDE's state (plugins, tools,
   generations, history). Kept, it moves to `~/.local/share/.super-ide-trash`
@@ -423,9 +428,10 @@ Oil, the file tree, `:Git` and which-key list all of theirs with `g?` or `?`.
 
 ### Clipboard
 
-Locally, `unnamedplus` uses the system clipboard. **Over SSH**, copying uses
-**OSC 52**, which places the text on your local clipboard; pasting uses an
-internal cache. In tmux, set `set -g set-clipboard on`. Hold **Shift** while
+Locally, `unnamedplus` uses the system clipboard. **Over SSH**, and on a
+Linux machine without a clipboard tool (for example after `sudo -i` or `su` on
+a server), copying uses **OSC 52**, which places the text on the clipboard of
+the computer your terminal runs on; pasting uses an internal cache. In tmux, set `set -g set-clipboard on`. Hold **Shift** while
 dragging to use the terminal's own selection.
 
 ---
@@ -662,7 +668,7 @@ Start with **`:IDEDoctor`**. Then:
 
 | Symptom | Cause and fix |
 |:--|:--|
-| `nvim` still starts another Neovim after installing | Open a new terminal (or `hash -r`). Linux: log in again if `~/.local/bin` was new. Windows: a system-wide Neovim comes first on `PATH`; remove it ([What installing changes](#what-installing-changes)) |
+| `nvim` still starts another Neovim after installing | Open a new terminal (or `exec $SHELL -l`). `type -a nvim` lists every `nvim` in `PATH` order; the first must be `~/.local/bin/nvim`. If you declined the startup-file line, add `~/.local/bin` to `PATH` yourself. Windows: a system-wide Neovim comes first on `PATH`; remove it ([What installing changes](#what-installing-changes)) |
 | `install.ps1` "cannot be loaded because running scripts is disabled" | Start it with `powershell -ExecutionPolicy Bypass -File install.ps1` ([Local install](#local-install)) |
 | An install printed `Nvim: Caught deadly signal 'SIGINT'` | Expected after Ctrl+C; the install was reverted ([Cancelling](#cancelling)) |
 | `curl: (35) … SSL_ERROR_SYSCALL in connection to github.com:443`, or downloads that hang | GitHub cannot be reached from this network ([Network access](#network-access)) |
@@ -680,7 +686,8 @@ Start with **`:IDEDoctor`**. Then:
 | No syntax colours after a switch or update | Parsers are rebuilt for the new Neovim on the next start; this needs a C compiler. `:IDESync` retries |
 | No language server for C/C++ | clangd needs `compile_commands.json` (below). On Linux arm64 Mason has no clangd; the IDE offers `apt-get install clangd` |
 | `rust-analyzer` is “found” but does nothing | rustup's proxy exists without the component: `rustup component add rust-analyzer` |
-| Copy over SSH does not reach your laptop | Your terminal must support OSC 52; in tmux set `set -g set-clipboard on` |
+| Copy over SSH does not reach your laptop | Your terminal must support OSC 52; in tmux set `set -g set-clipboard on`. Tabby drops copies longer than about 750 bytes; hold **Shift** and select with the mouse instead |
+| Right-click → Copy also pastes text after the cursor | The terminal pastes on right-click. The paste waits until the menu closes, then lands in the file. In Tabby, set Settings → Terminal → Mouse → Right click to **Off**: “Paste if no selection, else copy” pastes too, because text selected in Neovim is not the terminal's own selection |
 
 ### `compile_commands.json` for C/C++
 

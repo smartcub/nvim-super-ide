@@ -17,8 +17,9 @@
 --    * Bring your own compiler; the IDE brings everything else. Servers,
 --      formatters, parsers and debuggers arrive the first time a language
 --      is met, so a machine pays only for the languages it speaks.
---    * Reproducible by construction. The LOCK table below pins Neovim, every
---      plugin and every tool. The same file installs the same IDE anywhere.
+--    * Reproducible by construction. The LOCK table below pins Neovim and
+--      every plugin. The same file installs the same IDE anywhere; language
+--      tools come at their latest version the first time they are needed.
 --    * A generation is a whole file. Code and versions are only proven
 --      together, so history keeps complete copies of this file, never a
 --      version table torn from its code. Only :IDEPin makes a generation.
@@ -835,8 +836,12 @@ do
   local function win_path_set(value)
     ps(("[Environment]::SetEnvironmentVariable('Path','%s','User')"):format((value:gsub("'", "''"))))
   end
-  local ZPROFILE = joinpath(HOME, ".zprofile")
-  local ZLINE = 'export PATH="$HOME/.local/bin:$PATH"   # added by Neovim Super IDE'
+  -- The line added to a shell's startup file when ~/.local/bin is not on its
+  -- PATH. It adds the directory only when it is missing, so a file read twice
+  -- (bash's ~/.profile sourcing ~/.bashrc) or a PATH that already has it is
+  -- left alone.
+  local RC_LINE = 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; '
+    .. '*) export PATH="$HOME/.local/bin:$PATH" ;; esac   # added by Neovim Super IDE'
 
   -- The first `nvim` on a PATH string that is not ours.
   local function shadowing(path_string, ours_dir)
@@ -847,6 +852,92 @@ do
         if vim.fn.executable(cand) == 1 then return cand end
       end
     end
+  end
+
+  -- The user's login shell: $SHELL, or the account's entry when it is unset
+  -- (a container, a cron job).
+  local function login_shell()
+    local sh = vim.env.SHELL
+    if not sh or sh == "" then
+      local pw = uv.os_get_passwd()
+      sh = pw and pw.shell or ""
+    end
+    return sh, vim.fs.basename(sh)
+  end
+
+  -- PATH as that shell will have it, asked from the shell itself.
+  --   login     a login (SSH, a console, macOS terminals): -l, and -i too,
+  --             because many users extend PATH in ~/.zshrc or ~/.bashrc
+  --   terminal  a terminal opened on a Linux desktop: -i without -l. Its PATH
+  --             comes from the desktop session, which started before this
+  --             install and so lacks ~/.local/bin unless a file adds it.
+  -- The shell gets a clean environment, so what this installer's own process
+  -- inherited does not count, and no terminal: stdin is closed, so nothing in
+  -- those files can wait for input. Themes may print, so PATH is fenced by
+  -- markers. A startup file that hangs (`exec tmux`, say) hits the timeout;
+  -- a login is then asked again without -i.
+  local function shell_env(sh)
+    return { HOME = HOME, USER = vim.env.USER, LOGNAME = vim.env.LOGNAME, SHELL = sh, TERM = "dumb",
+      LANG = vim.env.LANG, PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      ZDOTDIR = vim.env.ZDOTDIR }
+  end
+  local function shell_path(sh, kind)
+    local env = shell_env(sh)
+    local probe = [[printf '\n@@SUPER-IDE-PATH@@%s@@\n' "$PATH"]]
+    local tries = kind == "login" and { { "-l", "-i" }, { "-l" } } or { { "-i" } }
+    for _, flags in ipairs(tries) do
+      local ok, job = pcall(vim.system, vim.list_extend({ sh }, vim.list_extend(vim.deepcopy(flags), { "-c", probe })),
+        { env = env, clear_env = true, text = true, cwd = HOME })
+      if ok then
+        local r = job:wait(10000)
+        local found = r.code == 0 and (r.stdout or ""):match("@@SUPER%-IDE%-PATH@@(.-)@@")
+        if found then return found end
+      end
+    end
+  end
+
+  -- The startup file that puts ~/.local/bin on PATH for each kind of shell
+  -- (see shell_path), or nil when we do not edit that shell's files (fish
+  -- and the rest: the user is told what to add).
+  --   zsh   both kinds: on macOS ~/.zprofile, because /etc/zprofile
+  --         (path_helper) puts the system directories first and would push an
+  --         earlier entry back; elsewhere ~/.zshenv, which every zsh reads.
+  --         In ZDOTDIR when the system sets one, as zsh reads them from there.
+  --   bash  login: the login file bash reads (the first of ~/.bash_profile,
+  --         ~/.bash_login, ~/.profile); terminal: ~/.bashrc, if there is one.
+  local function rc_files(sh, name)
+    if name == "zsh" then
+      local r = vim.system({ sh, "-c", 'printf %s "${ZDOTDIR:-$HOME}"' },
+        { env = shell_env(sh), clear_env = true, text = true }):wait(10000)
+      local dir = (r.code == 0 and r.stdout ~= "") and r.stdout or HOME
+      local f = joinpath(dir, OS == "mac" and ".zprofile" or ".zshenv")
+      return { login = f, terminal = f }
+    elseif name == "bash" then
+      local login = joinpath(HOME, ".profile")
+      for _, f in ipairs({ ".bash_profile", ".bash_login", ".profile" }) do
+        if lexists(joinpath(HOME, f)) then login = joinpath(HOME, f); break end
+      end
+      local rc = joinpath(HOME, ".bashrc")
+      return { login = login, terminal = lexists(rc) and rc or nil }
+    end
+  end
+
+  -- Append RC_LINE to a file, recorded for the undo: the file, whether the
+  -- install created it, and whether a newline had to go first (the file did
+  -- not end with one). The rows go in before the write, so an interrupted
+  -- install still finds them.
+  local function add_rc_line(pending, file)
+    local text = read_file(file)
+    if text and text:find(RC_LINE, 1, true) then return end
+    if not text then
+      pending[#pending + 1] = { "install.tsv", "shell-rc-created", file }
+    elseif text ~= "" and text:sub(-1) ~= "\n" then
+      pending[#pending + 1] = { "install.tsv", "shell-rc-newline", file }
+    end
+    pending[#pending + 1] = { "install.tsv", "shell-rc", file }
+    local f = assert(io.open(file, "a"))
+    f:write((text and text ~= "" and text:sub(-1) ~= "\n") and "\n" or "", RC_LINE, "\n")
+    f:close()
   end
 
   local function install_entry(pending)
@@ -865,7 +956,7 @@ do
         LC.warn("If you do not need that Neovim, remove it (winget installs it as Neovim.Neovim) and open a new terminal;")
         LC.warn("otherwise start Super IDE by its full path: " .. joinpath(ENTRY, "nvim.exe"))
       else
-        LC.say("Open a new terminal so the updated PATH takes effect.")
+        LC.say("If `nvim` is not found in this window, open a new terminal: the user PATH changed.")
       end
       return
     end
@@ -874,26 +965,49 @@ do
       make_link(joinpath(DIR.opt, "current", "bin", "nvim"), ENTRY)
       pending[#pending + 1] = { "install.tsv", "entry", ENTRY }
     end
-    local on_path = vim.iter(vim.split(vim.env.PATH or "", ":", { plain = true }))
-      :any(function(d) return same_path(d, BIN_DIR) end)
-    if OS == "mac" and not on_path and not (read_file(ZPROFILE) or ""):find(ZLINE, 1, true) then
-      if LC.ask("~/.local/bin is not on your PATH. Add it in ~/.zprofile (removed again on uninstall)?", true) then
-        local existed = lexists(ZPROFILE)
-        local f = assert(io.open(ZPROFILE, "a"))
-        f:write("\n", ZLINE, "\n")
-        f:close()
-        pending[#pending + 1] = { "install.tsv", "zprofile-line", ZLINE }
-        if not existed then pending[#pending + 1] = { "install.tsv", "zprofile-created", ZPROFILE } end
-        on_path = true
+    -- Whether new shells find ~/.local/bin, judged by the login shell itself
+    -- for each kind (macOS has only logins); where one does not, add RC_LINE
+    -- to the file that serves that kind.
+    local sh, name = login_shell()
+    local kinds = OS == "mac" and { "login" } or { "login", "terminal" }
+    local function on_path(p)
+      return p and vim.iter(vim.split(p, ":", { plain = true })):any(function(d) return same_path(d, BIN_DIR) end)
+    end
+    local paths = {}
+    for _, k in ipairs(kinds) do paths[k] = sh ~= "" and shell_path(sh, k) or nil end
+    local rc, files = rc_files(sh, name) or {}, {}
+    for _, k in ipairs(kinds) do
+      if paths[k] and not on_path(paths[k]) and rc[k] and not vim.tbl_contains(files, rc[k]) then
+        files[#files + 1] = rc[k]
       end
     end
-    local other = shadowing(vim.env.PATH, BIN_DIR)
-    if not on_path then
-      LC.say("~/.local/bin is not on PATH yet. Log out and back in (Ubuntu's ~/.profile adds it), or start " .. ENTRY)
-    elseif other then
-      LC.warn(other .. " comes before ~/.local/bin on PATH; reorder PATH or start " .. ENTRY)
+    if #files > 0 then
+      local shown = table.concat(vim.tbl_map(function(f) return vim.fn.fnamemodify(f, ":~") end, files), " and ")
+      if LC.ask(("~/.local/bin is not on %s's PATH. Add one line to %s (removed again on uninstall)?"):format(name, shown), true) then
+        for _, f in ipairs(files) do add_rc_line(pending, f) end
+        LC.say("Added ~/.local/bin to PATH in " .. shown .. ".")
+        for _, k in ipairs(kinds) do paths[k] = shell_path(sh, k) end
+      end
+    end
+    -- Report what a new login will run when the user types `nvim`; a desktop
+    -- terminal that still lacks it (bash without ~/.bashrc) needs a new login.
+    local path = paths.login
+    if path and on_path(path) and not shadowing(path, BIN_DIR) and paths.terminal and not on_path(paths.terminal) then
+      LC.say("Log out and back in so that `nvim` starts Super IDE in every terminal.")
+      return
+    end
+    if not path then
+      LC.say("Could not ask " .. (sh ~= "" and sh or "your shell") .. " for its PATH. Make sure ~/.local/bin is on it, or start " .. ENTRY)
+    elseif not on_path(path) then
+      if name == "fish" then
+        LC.warn("~/.local/bin is not on fish's PATH. Run once:  fish_add_path ~/.local/bin")
+      else
+        LC.warn(("~/.local/bin is not on %s's PATH. Add it in your shell's startup file, or start %s"):format(name, ENTRY))
+      end
+    elseif shadowing(path, BIN_DIR) then
+      LC.warn(shadowing(path, BIN_DIR) .. " comes before ~/.local/bin on PATH; reorder PATH or start " .. ENTRY)
     else
-      LC.say("Open a new terminal (or run `hash -r`) so `nvim` starts Super IDE.")
+      LC.say("Open a new terminal, or run:  exec $SHELL -l   so that `nvim` starts Super IDE.")
     end
   end
 
@@ -909,12 +1023,21 @@ do
     for _, entry in ipairs(M.entry or {}) do
       if link_points_to(entry, joinpath(DIR.opt, "current", "bin", "nvim")) then os.remove(entry) end
     end
-    for _, line in ipairs(M["zprofile-line"] or {}) do
-      local text = read_file(ZPROFILE)
+    -- Take out exactly what add_rc_line appended (its last copy), so the file
+    -- is byte for byte as before; a file the install created goes when empty.
+    local function listed(kind, f) return vim.tbl_contains(M[kind] or {}, f) end
+    for _, f in ipairs(M["shell-rc"] or {}) do
+      local text = read_file(f)
       if text then
-        local kept = vim.tbl_filter(function(l) return l ~= line end, vim.split(text, "\n", { plain = true }))
-        local out = (table.concat(kept, "\n"):gsub("\n\n+$", "\n"))
-        if M["zprofile-created"] and vim.trim(out) == "" then os.remove(ZPROFILE) else write_file(ZPROFILE, out) end
+        local block = (listed("shell-rc-newline", f) and "\n" or "") .. RC_LINE .. "\n"
+        local at, last = 0, nil
+        while true do
+          at = text:find(block, at + 1, true)
+          if not at then break end
+          last = at
+        end
+        if last then text = text:sub(1, last - 1) .. text:sub(last + #block) end
+        if listed("shell-rc-created", f) and text == "" then os.remove(f) else write_file(f, text) end
       end
     end
   end
@@ -1825,15 +1948,22 @@ vim.g.loaded_perl_provider = 0
 vim.g.loaded_node_provider = 0
 if not SETTINGS.python_provider then vim.g.loaded_python3_provider = 0 end
 
--- Clipboard. Over SSH there is rarely a clipboard tool on the server, so we
--- copy through OSC 52: the escape sequence travels back to your local
--- terminal, which puts the text on your local clipboard. Pasting reads from a
--- local cache, because few terminals allow programs to read the clipboard.
+-- Clipboard. Copying goes through OSC 52 when Neovim has no clipboard that
+-- reaches you: over SSH (the server's clipboard is not yours), and wherever
+-- no clipboard tool exists at all, as on a server after sudo or su, which
+-- drop the SSH_* variables. OSC 52 is an escape sequence that travels back
+-- to the terminal you are typing in, which puts the text on your local
+-- clipboard. Pasting reads from a local cache, because few terminals allow
+-- programs to read the clipboard.
+--   desktop  a forwarded or local X/Wayland clipboard tool: always preferred
+--   own      a clipboard Neovim finds by itself: macOS, Windows, WSL's
+--            win32yank, or tmux's paste buffer
 do
   local remote = vim.env.SSH_TTY or vim.env.SSH_CONNECTION
-  local forwarded = (vim.env.WAYLAND_DISPLAY and exe("wl-copy"))
+  local desktop = (vim.env.WAYLAND_DISPLAY and exe("wl-copy"))
     or (vim.env.DISPLAY and (exe("xclip") or exe("xsel")))
-  if remote and not forwarded then
+  local own = OS ~= "linux" or exe("win32yank.exe") or vim.env.TMUX
+  if not desktop and (remote or not own) then
     local osc52 = require("vim.ui.clipboard.osc52")
     local cache = { {}, "v" }
     local function copy(reg)
@@ -1918,7 +2048,12 @@ vim.api.nvim_create_user_command("ColumnGuidesOff", function() guides(false) end
 vim.keymap.set("n", "<leader>cg", guides_toggle, { desc = "Toggle column guides (80/100/120)" })
 
 -- Return to the last cursor position when a file is reopened. Scheduled so
--- that the filetype is already known when we check the exclusions.
+-- that the filetype is already known when we check the exclusions. Whatever
+-- opened the file may already have placed the cursor (a jump to a definition,
+-- a grep or quickfix result, `nvim +42 file`); that runs before this, so the
+-- position is restored only while the cursor is still where every file opens,
+-- at the very start. A file with no remembered position has '" at the start
+-- too, and is left alone.
 local NO_RESTORE = { gitcommit = true, gitrebase = true, help = true, qf = true, ["neo-tree"] = true }
 vim.api.nvim_create_autocmd("BufReadPost", {
   group = habits,
@@ -1929,8 +2064,10 @@ vim.api.nvim_create_autocmd("BufReadPost", {
       if vim.api.nvim_get_current_buf() ~= ev.buf then return end
       -- The '"' mark is where the cursor was when the buffer was last left;
       -- Neovim keeps it across sessions in its shada file.
+      local cur = vim.api.nvim_win_get_cursor(0)
+      if cur[1] ~= 1 or cur[2] ~= 0 then return end
       local mark = vim.api.nvim_buf_get_mark(ev.buf, '"')
-      if mark[1] > 0 and mark[1] <= vim.api.nvim_buf_line_count(ev.buf) then
+      if (mark[1] > 1 or mark[2] > 0) and mark[1] <= vim.api.nvim_buf_line_count(ev.buf) then
         pcall(vim.api.nvim_win_set_cursor, 0, mark)
       end
     end)

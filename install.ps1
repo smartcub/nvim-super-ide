@@ -225,6 +225,10 @@ $SuperIdeFile = $MyInvocation.MyCommand.Path
       # it installs to, so no running program blocks any file it replaces.
       $code = Invoke-Installer (Join-Path $Unpacked 'bin\nvim.exe') (@('-l', $Init, 'install', '--archive', $Zip) + $Opts)
     }
+    # The installer added Super IDE to the user PATH in the registry. Under
+    # `irm | iex` this is your own session: reload PATH so `nvim` works in this
+    # window right away. (Run as a file, it only changes this script's process.)
+    if ($code -eq 0) { Refresh-Path }
   }
   catch {
     Write-Host "xx  $_" -ForegroundColor Red
