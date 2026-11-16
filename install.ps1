@@ -32,7 +32,9 @@
       curl.exe and tar.exe ship with Windows 10 (1803) and later.
    3. Downloads that exact Neovim release into the temporary folder
       (skipped when Super IDE already has that version installed).
-   4. Runs it as the installer: `nvim -l init.lua install --archive FILE`.
+   4. Runs it, by its full path, as the installer:
+      `<that nvim.exe> -l init.lua install --archive FILE`. Whatever `nvim`
+      PATH finds (perhaps an older one) plays no part.
       From here on init.lua does everything: it unpacks the same archive
       into %LOCALAPPDATA%\super-ide (no second download), sets aside your
       existing configuration, adds the user PATH entry, installs plugins, ...
@@ -41,7 +43,8 @@
  This script does only what cannot be done before a Neovim exists.
  Everything else lives in init.lua, once, for every platform.
  No uninstall here: winget packages stay (other software may use them);
- uninstall with  nvim -l $env:LOCALAPPDATA\nvim\init.lua uninstall
+ uninstall with
+   & "$env:LOCALAPPDATA\super-ide\current\bin\nvim.exe" -l "$env:LOCALAPPDATA\nvim\init.lua" uninstall
 
  Safe to run again: present packages are skipped.
  Written for Windows PowerShell 5.1, the one every Windows 10/11 has.

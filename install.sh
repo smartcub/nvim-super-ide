@@ -29,7 +29,9 @@
 #         others:  names what is missing and stops if a required one is.
 #    3. Downloads that exact Neovim release into a temporary directory
 #       (skipped when Super IDE already has that version installed).
-#    4. Runs it as the installer: `nvim -l init.lua install --archive FILE`.
+#    4. Runs it, by its full path, as the installer:
+#       `<that nvim> -l init.lua install --archive FILE`. Whatever `nvim`
+#       PATH finds (perhaps an older one) plays no part.
 #       From here on init.lua does everything: it unpacks the same archive
 #       into ~/.local/opt/super-ide (no second download), sets aside your old
 #       configuration, installs plugins, and so on. See README.md.
@@ -45,8 +47,9 @@
 #      software and is your decision, not an IDE's.
 #    * No uninstall. System packages stay when Super IDE goes: they may have
 #      been here before, or other software may use them. Uninstall with
-#      `nvim -l ~/.config/nvim/init.lua uninstall`.
-#    * No PATH or profile change; init.lua makes the `nvim` command.
+#      `~/.local/bin/nvim -l ~/.config/nvim/init.lua uninstall`.
+#    * No PATH or profile change here; init.lua makes the `nvim` command and,
+#      if you agree, the PATH line.
 #
 #  Safe to run again: present packages are skipped; a run cut off by a
 #  network error simply starts over.

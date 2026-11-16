@@ -466,9 +466,9 @@ dragging to use the terminal's own selection.
 | `:LspInfo` | Alias for `:checkhealth vim.lsp` |
 | `:Mason`, `:Lazy` | Package and plugin managers |
 
-From a terminal: `nvim -l init.lua install`, and with the installed file
-(`~/.config/nvim/init.lua`): `update [vX.Y.Z]` (the same as `:IDEUpdate`),
-`uninstall`, `help`.
+From a terminal: `nvim -l init.lua install`, and, with Super IDE's own Neovim
+and the installed file (`~/.local/bin/nvim -l ~/.config/nvim/init.lua …`):
+`update [vX.Y.Z]` (the same as `:IDEUpdate`), `uninstall`, `help`.
 
 ```bash
 nvim --clean file.c               # stock Neovim: no configuration, no plugins

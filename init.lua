@@ -1796,20 +1796,24 @@ if SCRIPT then
 Neovim Super IDE — script commands (README.md is the full guide)
 
   nvim -l init.lua install [--yes] [--git-editor]
-      Install Super IDE from this file. When it is already installed, this
-      file replaces the live generation after a warning and a question (the
-      generations stored so far are kept).
+      Install Super IDE from this file (any Neovim 0.12 or newer). When it is
+      already installed, this file replaces the live generation after a
+      warning and a question (the generations stored so far are kept).
 
-  nvim -l ~/.config/nvim/init.lua update [vX.Y.Z]
+  nvim -l init.lua help
+      This text.
+
+Once installed, run the commands below with Super IDE's own Neovim, by its
+full path, so an older `nvim` earlier on PATH plays no part (Windows:
+%LOCALAPPDATA%\super-ide\current\bin\nvim.exe, %LOCALAPPDATA%\nvim\init.lua):
+
+  ~/.local/bin/nvim -l ~/.config/nvim/init.lua update [vX.Y.Z]
       Move to the newest published release of Super IDE (or to the one named)
       as a candidate; your own changes to init.lua are merged in. The same as
       :IDEUpdate inside the IDE.
 
-  nvim -l ~/.config/nvim/init.lua uninstall [--keep-state | --discard-state] [--yes]
+  ~/.local/bin/nvim -l ~/.config/nvim/init.lua uninstall [--keep-state | --discard-state] [--yes]
       Remove Super IDE and bring back the configuration found before install.
-
-  nvim -l init.lua help
-      This text.
 
   Normally started for you by install.sh / install.ps1, which first add the
   system packages and fetch the pinned Neovim. They pass one more option:
