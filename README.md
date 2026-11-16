@@ -205,12 +205,19 @@ restores the previous generation, which may take a few minutes.
 ```vim
 :IDEUninstall          " asks keep-or-delete; finishes after Neovim exits
 ```
+From a terminal, start Super IDE's own Neovim by its full path, so it works
+whatever `nvim` your `PATH` finds first:
+
 ```bash
-nvim -l ~/.config/nvim/init.lua uninstall      # from a terminal
+~/.local/bin/nvim -l ~/.config/nvim/init.lua uninstall
+```
+```powershell
+& "$env:LOCALAPPDATA\super-ide\current\bin\nvim.exe" -l "$env:LOCALAPPDATA\nvim\init.lua" uninstall
 ```
 
 `--keep-state` / `--discard-state` answer the question in advance; `--yes`
-keeps the state.
+keeps the state. If Super IDE's own Neovim is missing or broken, install again
+first: the installer brings back the pinned Neovim, then uninstall.
 
 - **Restored**: your previous configuration (`nvim-orig` back to `nvim`), git's
   `core.editor`, your `PATH` and shell startup files, and the clangd links

@@ -109,10 +109,33 @@
 -- ============================================================================
 
 -- has("nvim-0.12") is 1 when this Neovim is 0.12 or newer. Older ones get a
--- bare editor (interactive) or exit code 1 (script mode, where _G.arg exists).
+-- bare editor (interactive) or exit code 1 (script mode: `nvim -l` sets
+-- _G.arg[0] to the script; the editor has an empty _G.arg).
+-- When Super IDE's own Neovim is installed here, an older `nvim` came first
+-- on PATH: name both, and give the command that runs ours by its full path
+-- (in script mode the same command line, so `uninstall` always works).
+-- This part runs in old Neovims, so it uses only long-standing functions.
 if vim.fn.has("nvim-0.12") == 0 then
-  local msg = "Super IDE needs Neovim 0.12 or newer (found " .. tostring(vim.version()) .. "). See README.md."
-  if _G.arg then io.stderr:write(msg, "\n"); os.exit(1) end
+  local script = type(_G.arg) == "table" and _G.arg[0] ~= nil
+  local win = vim.fn.has("win32") == 1
+  local ours = win and ((os.getenv("LOCALAPPDATA") or "") .. "\\super-ide\\current\\bin\\nvim.exe")
+    or ((os.getenv("HOME") or "") .. "/.local/bin/nvim")
+  local found = ("found %s at %s"):format(tostring(vim.version()), vim.v.progpath)
+  local msg
+  if vim.fn.executable(ours) == 1 then
+    if script then
+      local cmd = { ours, "-l", _G.arg[0] }
+      for i = 1, #_G.arg do cmd[#cmd + 1] = _G.arg[i] end
+      msg = ("Super IDE needs Neovim 0.12 or newer (%s).\nRun it with Super IDE's own Neovim:  %s")
+        :format(found, table.concat(cmd, " "))
+    else
+      msg = ("Super IDE needs Neovim 0.12 or newer (%s). Start %s instead, or put its directory first on PATH.")
+        :format(found, ours)
+    end
+  else
+    msg = ("Super IDE needs Neovim 0.12 or newer (%s). See README.md."):format(found)
+  end
+  if script then io.stderr:write(msg, "\n"); os.exit(1) end
   vim.api.nvim_echo({ { msg .. " Loading a bare editor instead.", "ErrorMsg" } }, true, {})
   return
 end
@@ -940,7 +963,12 @@ do
     f:close()
   end
 
+  -- Returns the closing advice ({ level, text } lines) instead of printing
+  -- it: the plugin sync that follows prints hundreds of lines, so the
+  -- installer repeats this advice as its very last words.
   local function install_entry(pending)
+    local notes = {}
+    local function note(level, text) notes[#notes + 1] = { level, text } end
     if IS_WIN then
       local entry = ENTRY:gsub("/", "\\")
       local user = win_path("User")
@@ -950,15 +978,15 @@ do
       end
       local other = shadowing(win_path("Machine"), entry)
       if other then
-        LC.warn(("%s comes first on the system PATH, so `nvim` would start it instead of Super IDE."):format(other))
+        note("warn", ("%s comes first on the system PATH, so `nvim` would start it instead of Super IDE."):format(other))
         -- Windows searches the system PATH before the user PATH, and changing
         -- the system PATH needs administrator rights, so only explain.
-        LC.warn("If you do not need that Neovim, remove it (winget installs it as Neovim.Neovim) and open a new terminal;")
-        LC.warn("otherwise start Super IDE by its full path: " .. joinpath(ENTRY, "nvim.exe"))
+        note("warn", "If you do not need that Neovim, remove it (winget installs it as Neovim.Neovim) and open a new terminal;")
+        note("warn", "otherwise start Super IDE by its full path: " .. joinpath(ENTRY, "nvim.exe"))
       else
-        LC.say("If `nvim` is not found in this window, open a new terminal: the user PATH changed.")
+        note("say", "If `nvim` is not found in this window, open a new terminal: the user PATH changed.")
       end
-      return
+      return notes
     end
     if not lexists(ENTRY) then
       vim.fn.mkdir(BIN_DIR, "p")
@@ -993,22 +1021,22 @@ do
     -- terminal that still lacks it (bash without ~/.bashrc) needs a new login.
     local path = paths.login
     if path and on_path(path) and not shadowing(path, BIN_DIR) and paths.terminal and not on_path(paths.terminal) then
-      LC.say("Log out and back in so that `nvim` starts Super IDE in every terminal.")
-      return
-    end
-    if not path then
-      LC.say("Could not ask " .. (sh ~= "" and sh or "your shell") .. " for its PATH. Make sure ~/.local/bin is on it, or start " .. ENTRY)
+      note("say", "Log out and back in so that `nvim` starts Super IDE in every terminal.")
+    elseif not path then
+      note("say", "Could not ask " .. (sh ~= "" and sh or "your shell") .. " for its PATH. Make sure ~/.local/bin is on it, or start " .. ENTRY)
     elseif not on_path(path) then
       if name == "fish" then
-        LC.warn("~/.local/bin is not on fish's PATH. Run once:  fish_add_path ~/.local/bin")
+        note("warn", "~/.local/bin is not on fish's PATH. Run once:  fish_add_path ~/.local/bin")
       else
-        LC.warn(("~/.local/bin is not on %s's PATH. Add it in your shell's startup file, or start %s"):format(name, ENTRY))
+        note("warn", ("~/.local/bin is not on %s's PATH. Add it in your shell's startup file, or start %s"):format(name, ENTRY))
       end
     elseif shadowing(path, BIN_DIR) then
-      LC.warn(shadowing(path, BIN_DIR) .. " comes before ~/.local/bin on PATH; reorder PATH or start " .. ENTRY)
+      note("warn", shadowing(path, BIN_DIR) .. " comes before ~/.local/bin on PATH; reorder PATH or start " .. ENTRY)
     else
-      LC.say("Open a new terminal, or run:  exec $SHELL -l   so that `nvim` starts Super IDE.")
+      -- This shell still has the PATH and command cache it started with.
+      note("say", "Open a new terminal, or run:  exec $SHELL -l   so that `nvim` starts Super IDE.")
     end
+    return notes
   end
 
   local function undo_entry(M)
@@ -1605,7 +1633,7 @@ do
     end)
     LC.set_current(lk.neovim)
     on_undo("the nvim command", function() undo_entry(manifest(pending)) end)
-    install_entry(pending)
+    local notes = install_entry(pending)
 
     -- 8. Optional: git commit messages in Super IDE.
     on_undo("git's core.editor", function() undo_git(manifest(pending)) end)
@@ -1627,6 +1655,7 @@ do
     if #backups > 0 then   -- only when step 4 actually set something aside
       LC.say("Your previous configuration is kept as *-orig; it still runs with:  NVIM_APPNAME=nvim-orig nvim")
     end
+    for _, n in ipairs(notes) do LC[n[1]](n[2]) end
   end
 
   -- Uninstall ------------------------------------------------------------------------------
