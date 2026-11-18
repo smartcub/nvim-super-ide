@@ -150,7 +150,7 @@ end
 -- :IDEUpdate uses it to find what you changed since, and moves it on.
 -- @@LOCK BEGIN
 local LOCK = {
-  release = "1.0.0",
+  release = "1.0.1",
   pinned = "2026-11-06",
   neovim = "v0.12.6",
   plugins = {
