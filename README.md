@@ -264,7 +264,7 @@ and Neovim version. The workflow:
 | Command | What it does |
 |:--|:--|
 | `:IDEUpdate` | Move to the newest **release of Super IDE** as a candidate: one `init.lua` whose Neovim and plugins were proven together. Your own changes to `init.lua` are merged in |
-| `:IDEUpdate v1.2.0` | The same, to that release (Tab completes the releases) |
+| `:IDEUpdate v1.2.0` | The same, to that release (`:IDEUpdate` lists the releases in its window) |
 | `:IDEUpdateUnsafe` | Try what is newer **upstream**, unproven: choose in a checklist among Neovim and each plugin. `--all` takes everything; `v0.12.5` changes only Neovim (crossing a minor version asks first) |
 | `:IDEDiff` | Show what the live state changes against the generation in effect: release, Neovim, each plugin's commits (with their subjects), edits to `init.lua` |
 | `:IDEPin` | Approve the live state: write it into the `LOCK` of `init.lua` and store the file as a new generation |
@@ -278,6 +278,15 @@ changes the same lines as you did, you are asked first: going on installs the
 release as published, and your version stays stored as a generation
 (`:IDESwitch` returns to it). `:IDEUpdate` starts from a pinned state, so
 `:IDEPin` or `:IDERollback` any unpinned changes first.
+
+**The `:IDEUpdate` window.** The update runs in a floating window that lists
+the releases and shows its progress; the editor stays usable meanwhile. Any
+question it asks is answered there. `Ctrl+C` in the window cancels and puts
+everything back as it was. When it ends, the window keeps its full output
+until you press `q` (or `Esc`, or any key while the cursor still blinks in it)
+or move to another window, and the command line shows the result in one line. If
+GitHub does not answer, it stops after about 20 seconds (a download after
+about 40) with the reason, instead of waiting forever.
 
 **The `:IDEUpdateUnsafe` checklist.** `Space` ticks the item under the cursor,
 `a` ticks all, `n` none, `Enter` updates the ticked items, `q` cancels. Nothing
@@ -678,7 +687,7 @@ Start with **`:IDEDoctor`**. Then:
 | `nvim` still starts another Neovim after installing | Open a new terminal (or `exec $SHELL -l`). `type -a nvim` lists every `nvim` in `PATH` order; the first must be `~/.local/bin/nvim`. If you declined the startup-file line, add `~/.local/bin` to `PATH` yourself. Windows: a system-wide Neovim comes first on `PATH`; remove it ([What installing changes](#what-installing-changes)) |
 | `install.ps1` "cannot be loaded because running scripts is disabled" | Start it with `powershell -ExecutionPolicy Bypass -File install.ps1` ([Local install](#local-install)) |
 | An install printed `Nvim: Caught deadly signal 'SIGINT'` | Expected after Ctrl+C; the install was reverted ([Cancelling](#cancelling)) |
-| `curl: (35) … SSL_ERROR_SYSCALL in connection to github.com:443`, or downloads that hang | GitHub cannot be reached from this network ([Network access](#network-access)) |
+| `curl: (35) … SSL_ERROR_SYSCALL in connection to github.com:443`, "Operation too slow", or "no answer from github.com" | GitHub cannot be reached from this network ([Network access](#network-access)) |
 | The install stops at apt's "Waiting for cache lock" | Ubuntu's automatic updates hold the package lock (common right after a fresh install); the script waits up to 10 minutes |
 | `:IDEUpdate` says "Unpinned changes" | It starts from a pinned state: `:IDEPin` keeps your changes, `:IDERollback` drops them; then run it again |
 | `install.sh` says "no terminal to ask on" | It runs without a terminal (CI, cron): add `--yes` |

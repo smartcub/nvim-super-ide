@@ -231,6 +231,19 @@ local HEADLESS = SCRIPT or #vim.api.nvim_list_uis() == 0
 local HOME = vim.fs.normalize(uv.os_homedir() or "")
 
 local function exe(name) return vim.fn.executable(name) == 1 end
+
+-- The curl command line for every download, followed by its own arguments.
+-- It gives up instead of waiting forever on a dead network: 10 s to
+-- connect, then it stops when fewer than 1 KB/s arrive for 20 s, so a large
+-- file on a slow line still completes but a stalled one does not hang. A
+-- failed try is retried (twice) only within the first 30 s, which keeps a
+-- dead network to about 40 s in all.
+local function curl(...)
+  return vim.list_extend({ "curl", "-fsSL", "--retry", "2", "--retry-max-time", "30",
+    "--connect-timeout", "10", "--speed-limit", "1024", "--speed-time", "20" }, { ... })
+end
+-- Added to network errors: what the user can do about them.
+local NET_HINT = "Check the network, or set a mirror in SETTINGS (README: Settings)."
 local function joinpath(...) return vim.fs.joinpath(...) end
 
 -- Neovim's four directories for an application name, computed the way Neovim
@@ -574,10 +587,10 @@ do
     vim.fn.mkdir(tmp, "p")
     if own then
       LC.say(("Downloading Neovim %s (%s) …"):format(tag, asset))
-      local r = vim.system({ "curl", "-fsSL", "--retry", "2", "-o", file, url }, { text = true }):wait()
+      local r = vim.system(curl("-o", file, url), { text = true }):wait()
       if r.code ~= 0 then
         rm(tmp); os.remove(file)
-        fail("download failed: " .. url .. "\n    " .. vim.trim(r.stderr or ""))
+        fail("download failed: " .. url .. "\n    " .. vim.trim(r.stderr or "") .. "\n    " .. NET_HINT)
       end
     else
       file = LC.archive
@@ -622,11 +635,38 @@ do
     return false
   end
 
-  -- Release tags >= 0.12, newest last, read from git (no API rate limit).
+  -- The tags of a git repository, without cloning it (and without the GitHub
+  -- API's rate limit). It never waits long:
+  --   * a stalled connection: git itself gives up after 15 s at under 1 KB/s
+  --     (http.lowSpeedLimit / http.lowSpeedTime);
+  --   * anything else (no answer while connecting): after 20 s the whole
+  --     process group is killed. git runs its HTTP helper as a child that
+  --     holds the output pipes, so killing git alone would leave us waiting
+  --     for them; detach = true gives git its own group to kill (Unix).
+  --   * no password prompt (GIT_TERMINAL_PROMPT=0), which a missing
+  --     repository would otherwise show.
+  local function ls_remote_tags(url)
+    local result
+    local job = vim.system({ "git", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=15",
+      "ls-remote", "--tags", "--refs", url },
+      { text = true, detach = not IS_WIN, env = { GIT_TERMINAL_PROMPT = "0" } },
+      function(r) result = r end)
+    if not vim.wait(20000, function() return result ~= nil end, 50) then
+      if not (not IS_WIN and pcall(uv.kill, -job.pid, "sigkill")) then pcall(job.kill, job, "sigkill") end
+      vim.wait(2000, function() return result ~= nil end, 50)
+      fail(("no answer from %s in 20 s. %s"):format(url, NET_HINT))
+    end
+    if result.code ~= 0 then
+      fail(("cannot list the tags of %s: %s\n    %s"):format(url, vim.trim(result.stderr or ""), NET_HINT))
+    end
+    return result.stdout or ""
+  end
+
+  -- Release tags >= 0.12, newest last.
   function LC.release_tags()
-    local r = vim.system({ "git", "ls-remote", "--tags", "--refs", SETTINGS.github .. "/neovim/neovim" }, { text = true }):wait()
+    local out = ls_remote_tags(SETTINGS.github .. "/neovim/neovim")
     local tags = {}
-    for tag in (r.stdout or ""):gmatch("refs/tags/(v%d+%.%d+%.%d+)\n") do
+    for tag in out:gmatch("refs/tags/(v%d+%.%d+%.%d+)\n") do
       local v = parse_tag(tag)
       if v[1] > 0 or v[2] >= 12 then tags[#tags + 1] = tag end
     end
@@ -1277,12 +1317,11 @@ do
   -- The result is staged as a candidate (try it, then :IDEPin or :IDERollback).
 
   -- Published releases (tags vX.Y.Z of SETTINGS.repo), oldest first.
-  function LC.ide_releases()
-    local url = SETTINGS.github .. "/" .. SETTINGS.repo
-    local r = vim.system({ "git", "ls-remote", "--tags", "--refs", url }, { text = true }):wait()
-    if r.code ~= 0 then fail("cannot list the releases of " .. url .. ": " .. vim.trim(r.stderr or "")) end
+  local function ide_releases()
     local tags = {}
-    for tag in (r.stdout or ""):gmatch("refs/tags/(v%d+%.%d+%.%d+)\n") do tags[#tags + 1] = tag end
+    for tag in ls_remote_tags(SETTINGS.github .. "/" .. SETTINGS.repo):gmatch("refs/tags/(v%d+%.%d+%.%d+)\n") do
+      tags[#tags + 1] = tag
+    end
     table.sort(tags, older_tag)
     return tags
   end
@@ -1291,8 +1330,8 @@ do
   -- cannot be downloaded.
   local function release_text(tag)
     local url = ("%s/%s/%s/init.lua"):format(SETTINGS.github_raw, SETTINGS.repo, tag)
-    local r = vim.system({ "curl", "-fsSL", "--retry", "2", url }, { text = true }):wait()
-    if r.code ~= 0 then return nil, url .. ": " .. vim.trim(r.stderr or "") end
+    local r = vim.system(curl(url), { text = true }):wait()
+    if r.code ~= 0 then return nil, url .. ": " .. vim.trim(r.stderr or "") .. "\n    " .. NET_HINT end
     return norm(r.stdout)
   end
 
@@ -1338,7 +1377,7 @@ do
   --                   "merged"   the user's changes were merged in
   --                   "replace"  they could not be: text is the release as
   --                              published, `why` says what stood in the way
-  function LC.release_plan(want)
+  local function release_plan(want)
     if not lexists(FILE.marker) then fail("Super IDE is not installed in " .. DIR.config) end
     if lexists(FILE.candidate) then fail("a candidate is being tried: :IDEPin keeps it, :IDERollback drops it") end
     local gen = LC.gen_current() or fail("no generation stored yet: :IDEPin first")
@@ -1346,8 +1385,9 @@ do
     if mine ~= LC.gen_text(gen) then fail("init.lua has unpinned edits: :IDEPin or :IDERollback first") end
     local mine_lk = LC.lock_from_text(mine) or fail("init.lua has no readable LOCK")
 
-    local tags = LC.ide_releases()
+    local tags = ide_releases()
     if #tags == 0 then fail(SETTINGS.repo .. " has not published a release yet") end
+    LC.say(("Releases: %s   (you have %s)"):format(table.concat(tags, "  "), mine_lk.release or "no release"))
     local tag = want or tags[#tags]
     if not vim.tbl_contains(tags, tag) then fail(tag .. " is not a release of " .. SETTINGS.repo) end
     local have = mine_lk.release
@@ -1387,7 +1427,7 @@ do
   end
 
   -- The question for a plan whose status is "replace".
-  function LC.release_question(plan)
+  local function release_question(plan)
     return ("Release %s cannot keep your changes to init.lua: %s.\n"
       .. "Replace them with the release as published? They stay stored as generation\n"
       .. "%s (:IDESwitch returns to it)."):format(plan.to, plan.why, plan.base_gen)
@@ -1396,7 +1436,7 @@ do
   -- Put a plan in place as a candidate: its Neovim, its init.lua, its plugin
   -- lock. :IDESync, run by the caller under the new file, does the rest.
   -- candidate.json goes first: from then on :IDERollback can undo the rest.
-  function LC.release_stage(plan)
+  local function release_stage(plan)
     local lk = LC.lock_from_text(plan.text) or fail("the new init.lua has no readable LOCK")
     LC.fetch_neovim(lk.neovim)
     json_write(FILE.candidate, { base = plan.base_gen, prev = plan.prev, new = lk.neovim,
@@ -1416,10 +1456,10 @@ do
   -- error puts everything back (see "Cancel and roll back").
   function LC.update(o)
     LC.say("Looking for releases of " .. SETTINGS.repo .. " …")
-    local plan = LC.release_plan(o.release)
+    local plan = release_plan(o.release)
     if plan.current then return LC.say("Already on release " .. plan.tag:sub(2) .. ".") end
     LC.say(("Release %s → %s"):format(plan.from or "?", plan.to))
-    if plan.status == "replace" and not LC.ask(LC.release_question(plan), false) then
+    if plan.status == "replace" and not LC.ask(release_question(plan), false) then
       return LC.say("Nothing changed.")
     end
     local restore, before_tag = snapshot_files(), LC.current_tag()
@@ -1429,7 +1469,7 @@ do
       restore()   -- init.lua, plugin lock, candidate and pending records
       LC.sync_here(true)
     end)
-    LC.release_stage(plan)
+    release_stage(plan)
     LC.sync_here()
     end_journal()
     LC.say(({ clean = "Release %s is in place as a candidate.",
@@ -2530,11 +2570,12 @@ end
 local function float_term(cmd, title, on_exit)
   -- nvim_create_buf(listed, scratch): not in the buffer list, never saved.
   local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"   -- closing the window also frees the buffer
   local w = math.min(110, math.floor(vim.o.columns * 0.85))
   local h = math.min(30, math.floor(vim.o.lines * 0.6))
   -- nvim_open_win(buf, enter, config): relative = "editor" makes a floating
   -- window, placed by row/col; enter = true moves the cursor into it.
-  vim.api.nvim_open_win(buf, true, {
+  local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor", width = w, height = h,
     row = math.floor((vim.o.lines - h) / 2), col = math.floor((vim.o.columns - w) / 2),
     border = "rounded", title = " " .. title .. " ", title_pos = "center",
@@ -2543,7 +2584,26 @@ local function float_term(cmd, title, on_exit)
   -- buffer (the float), so prompts such as sudo's password work there.
   vim.fn.jobstart(cmd, {
     term = true,
-    on_exit = function(_, code) vim.schedule(function() on_exit(code) end) end,
+    on_exit = function(_, code)
+      vim.schedule(function()
+        -- Neovim closes an ended terminal on any key, but only in Terminal
+        -- mode; <Esc> or a mouse click leaves it. So once the program has
+        -- ended, q or <Esc> in Normal mode closes the window too, and so does
+        -- moving to another window. While it runs nothing closes it: i
+        -- returns to the program.
+        if vim.api.nvim_buf_is_valid(buf) then
+          local function close()
+            if vim.api.nvim_win_is_valid(win) then pcall(vim.api.nvim_win_close, win, true) end
+          end
+          for _, key in ipairs({ "q", "<Esc>" }) do
+            vim.keymap.set("n", key, close, { buffer = buf, nowait = true, desc = "Close this window" })
+          end
+          vim.api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true,
+            callback = function() vim.schedule(close) end })
+        end
+        on_exit(code)
+      end)
+    end,
   })
   vim.cmd.startinsert()   -- Terminal mode: keys go to the program
 end
@@ -2598,7 +2658,7 @@ local function download_and_extract(url, dest, opts, cb)
   vim.fn.mkdir(dest, "p")
   -- Asynchronous: vim.system returns at once; main() brings the callback back
   -- onto the main loop when curl ends, then tar runs the same way.
-  vim.system({ "curl", "-fsSL", "--retry", "2", "-o", file, url }, {}, main(function(r)
+  vim.system(curl("-o", file, url), {}, main(function(r)
     if r.code ~= 0 then return cb(false, "download failed: " .. url) end
     local args = { "tar", "-xf", file, "-C", dest }
     if opts.strip then table.insert(args, "--strip-components=" .. opts.strip) end
@@ -2613,8 +2673,8 @@ end
 -- Resolve the newest release tag of a GitHub repository through the
 -- /releases/latest redirect: no API token, no rate limit.
 local function github_latest(repo, cb)
-  vim.system({ "curl", "-fsSLI", "-o", NULL_DEV, "-w", "%{url_effective}",
-    SETTINGS.github .. "/" .. repo .. "/releases/latest" }, { text = true }, main(function(r)
+  vim.system(curl("-I", "-o", NULL_DEV, "-w", "%{url_effective}",
+    SETTINGS.github .. "/" .. repo .. "/releases/latest"), { text = true }, main(function(r)
     cb(r.code == 0 and r.stdout:match("/releases/tag/([^/%s]+)%s*$") or nil)
   end))
 end
@@ -2707,7 +2767,7 @@ local function ensure_node(cb)
   if major and major >= 18 and exe("npm") then return cb(true) end
   once("runtime:node", function(done)
     busy("node", true)
-    vim.system({ "curl", "-fsSL", SETTINGS.node_dist .. "/index.json" }, { text = true }, main(function(r)
+    vim.system(curl(SETTINGS.node_dist .. "/index.json"), { text = true }, main(function(r)
       local ok, index = pcall(vim.json.decode, r.stdout or "")
       local version
       if ok and type(index) == "table" then
@@ -4624,23 +4684,24 @@ vim.api.nvim_create_user_command("IDEUpdateUnsafe", function(cmd)
   if not ok then busy("update", false); notify("Update failed: " .. tostring(err), vim.log.levels.ERROR) end
 end, {
   nargs = "?", desc = "Try upstream's newest Neovim and plugins (unproven) as a candidate: choose, --all, or one Neovim version",
-  -- <Tab> offers --all, then the release tags, newest first. deepcopy:
-  -- reverse() changes the list in place, and the cached one must stay in order.
-  complete = function() return vim.list_extend({ "--all" }, vim.fn.reverse(vim.deepcopy(release_tags()))) end,
+  -- <Tab> offers only --all: the Neovim releases need the network, and
+  -- completion would freeze the editor while asking for them.
+  complete = function() return { "--all" } end,
 })
 
 -- :IDEUpdate [vX.Y.Z] — move to a published release of Super IDE (the newest,
 -- or the one named) as a candidate. A release is one init.lua whose Neovim
 -- and plugins were proven together; your own changes to init.lua are
--- merged into it (LC.release_plan, section 3). If they cannot be, you are
--- asked before the release replaces them. Then: restart, try it, :IDEDiff,
--- and :IDEPin or :IDERollback, as with any candidate.
-local ide_tag_cache
-local function ide_releases()
-  ide_tag_cache = ide_tag_cache or LC.ide_releases()
-  return ide_tag_cache
-end
-
+-- merged into it. If they cannot be, you are asked before the release
+-- replaces them. Then: restart, try it, :IDEDiff, and :IDEPin or
+-- :IDERollback, as with any candidate.
+-- The work is the terminal command `init.lua update` (LC.update, section 3),
+-- run by Super IDE's own Neovim in a floating terminal: it reaches the
+-- network, and there the editor never freezes, every step is shown, Ctrl+C
+-- undoes everything, and the last lines (an error included) stay until a
+-- key is pressed. The command line gets one line at the end. There is no
+-- <Tab> completion: the list of releases needs the network, and completion
+-- would freeze the editor while asking for it; the window lists them.
 vim.api.nvim_create_user_command("IDEUpdate", function(cmd)
   local state, why = generation_state()
   if state == "candidate" then
@@ -4650,34 +4711,25 @@ vim.api.nvim_create_user_command("IDEUpdate", function(cmd)
     -- to exactly what is running now.
     return notify(("Unpinned changes (%s): :IDEPin or :IDERollback first."):format(table.concat(why, "; ")), vim.log.levels.WARN)
   end
-  local want = cmd.args ~= "" and cmd.args or nil
-  LC.say("Looking for releases of " .. SETTINGS.repo .. " …")
-  ide_tag_cache = nil   -- a release may have been published since the last look
-  local ok, err = pcall(function()
-    local plan = LC.release_plan(want)
-    if plan.current then return notify("Already on release " .. plan.tag:sub(2) .. ".") end
-    if plan.status == "replace" and not LC.ask(LC.release_question(plan), false) then
-      return notify("Nothing changed.")
+  local args = { LC.current_exe(), "-l", FILE.init, "update" }
+  if cmd.args ~= "" then args[#args + 1] = cmd.args end
+  local function done(code)
+    local cand = LC.json_read(FILE.candidate)
+    if code == 0 and cand and cand.scope == "release" then
+      notify(("Release %s is ready as a candidate. Restart to try it; :IDEDiff, then :IDEPin or :IDERollback."):format(cand.to))
+    elseif code == 0 then
+      notify("IDEUpdate: nothing changed (its window says why; q closes it).")
+    else
+      notify("IDEUpdate failed: its window says why (q closes it).", vim.log.levels.WARN)
     end
-    LC.release_stage(plan)
-    -- The rest runs under the new file: a separate headless Neovim.
-    local sync = { LC.current_exe(), "--headless", "+IDESync", "+qa" }
-    local function done(code)
-      notify(("Release %s is ready as a candidate%s. Restart to try it; :IDEDiff, then :IDEPin or :IDERollback."):format(plan.to,
-        code == 0 and "" or " (sync reported problems)"), code == 0 and vim.log.levels.INFO or vim.log.levels.WARN)
-    end
-    if HEADLESS then return done(vim.system(sync):wait().code) end
-    float_term(sync, ("release %s → %s"):format(plan.from or "?", plan.to), done)
-  end)
-  if not ok then notify("Update failed: " .. tostring(err), vim.log.levels.ERROR) end
-end, {
-  nargs = "?", desc = "Move to a published release of Super IDE (newest, or vX.Y.Z) as a candidate",
-  -- <Tab> offers the releases, newest first (deepcopy: reverse() works in place).
-  complete = function()
-    local ok, tags = pcall(ide_releases)
-    return ok and vim.fn.reverse(vim.deepcopy(tags)) or {}
-  end,
-})
+  end
+  if HEADLESS then
+    local r = vim.system(args, { text = true }):wait()
+    io.stdout:write(r.stdout or "", r.stderr or "")
+    return done(r.code)
+  end
+  float_term(args, "IDEUpdate", done)
+end, { nargs = "?", desc = "Move to a published release of Super IDE (newest, or vX.Y.Z) as a candidate" })
 
 -- :IDEPin — the live state is proven: write it into init.lua and store it.
 vim.api.nvim_create_user_command("IDEPin", function()
@@ -4864,15 +4916,18 @@ local function add_plugin(arg)
     -- A fresh headless Neovim reads the new spec; "Lazy! install" (! = wait
     -- until done) clones what is missing. v:progpath is this Neovim's binary.
     local cmd = { vim.v.progpath, "--headless", "+Lazy! install", "+qa" }
+    local origin = vim.api.nvim_get_current_win()   -- init.lua opens here, not in the float
     local function done(code)
       if code ~= 0 then
         return notify("Installing " .. name .. " failed; restart Neovim and lazy.nvim retries.", vim.log.levels.WARN)
       end
-      if not HEADLESS then
+      if not HEADLESS and vim.api.nvim_win_is_valid(origin) then
         -- bang = true: reload from disk (the buffer, if open, has no unsaved
         -- changes: checked above), then put the cursor on the new spec.
-        vim.cmd.edit({ args = { vim.fn.fnameescape(FILE.init) }, bang = true })
-        pcall(vim.api.nvim_win_set_cursor, 0, { line, 0 })
+        vim.api.nvim_win_call(origin, function()
+          vim.cmd.edit({ args = { vim.fn.fnameescape(FILE.init) }, bang = true })
+          pcall(vim.api.nvim_win_set_cursor, 0, { line, 0 })
+        end)
       end
       notify(("%s installed. Restart Neovim to load it; :IDEPin locks it, :IDERollback removes it."):format(name))
     end
