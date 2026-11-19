@@ -150,8 +150,8 @@ end
 -- :IDEUpdate uses it to find what you changed since, and moves it on.
 -- @@LOCK BEGIN
 local LOCK = {
-  release = "1.0.1",
-  pinned = "2026-11-06",
+  release = "1.0.2",
+  pinned = "2026-11-19",
   neovim = "v0.12.6",
   plugins = {
     ["LuaSnip"] = { branch = "master", commit = "642b0c595e11608b4c18219e93b88d7637af27bc" },
@@ -332,8 +332,12 @@ local function read_records(file)
   return out
 end
 
+-- A message for the user. Without a UI (a script, or a headless editor such
+-- as :IDESync in its window) it is written to stdout at once, one line each,
+-- so it keeps its place among other output (lazy.nvim's task lines);
+-- vim.notify would hold its line open until the next message.
 local function notify(msg, level)
-  if SCRIPT then
+  if HEADLESS then
     io.write((level or 0) >= vim.log.levels.WARN and "!!  " or "==> ", msg, "\n")
     return
   end
@@ -1475,7 +1479,7 @@ do
     LC.say(({ clean = "Release %s is in place as a candidate.",
       merged = "Release %s is in place as a candidate, with your changes to init.lua merged in.",
       replace = "Release %s is in place as a candidate, as published." })[plan.status]:format(plan.to))
-    LC.say("Start nvim and try it (:IDEDiff shows what changed); then :IDEPin keeps it, :IDERollback drops it.")
+    LC.say("Try it in a new Neovim session (:IDEDiff shows what changed); then :IDEPin keeps it, :IDERollback drops it.")
   end
 
   -- A framed warning on the terminal, bold red where colours are safe (a
@@ -4368,7 +4372,7 @@ vim.api.nvim_create_autocmd("VimEnter", {
 vim.api.nvim_create_user_command("IDESync", function()
   local ok_lazy, manage = pcall(require, "lazy.manage")
   if ok_lazy then
-    notify("Plugins: installing and checking out the LOCK's commits …")
+    notify("Plugins: installing what is missing …")
     -- lazy rewrites its lockfile from the checkouts after every operation, so
     -- hand it the LOCK afresh before each step rather than trusting the file.
     local lock = require("lazy.manage.lock")
@@ -4381,9 +4385,26 @@ vim.api.nvim_create_user_command("IDESync", function()
     end
     from_lock()
     manage.install({ wait = true, show = false, lockfile = true })
-    from_lock()
-    manage.restore({ wait = true, show = false })
     manage.clean({ wait = true, show = false })
+    -- Only plugins not already at the LOCK's commit are restored: :Lazy
+    -- restore fetches every plugin it is given, even one already in place.
+    -- What is checked out comes from git itself; a plugin not installed
+    -- (no longer declared, so just cleaned) is skipped.
+    local moved = {}
+    for name, want in pairs(LOCK.plugins) do
+      local dir = joinpath(DIR.data, "lazy", name)
+      if want.commit and uv.fs_stat(dir) then
+        local head = git_lines(dir, { "rev-parse", "HEAD" })
+        if not (head and head[1] == want.commit) then moved[#moved + 1] = name end
+      end
+    end
+    table.sort(moved)
+    if #moved > 0 then
+      notify(("Plugins: checking out the LOCK's commit for %s"):format(table.concat(moved, ", ")))
+      from_lock()
+      -- require("lazy").restore = :Lazy restore [plugins]: only the plugins named.
+      require("lazy").restore({ plugins = moved, wait = true, show = false })
+    end
     pin_lazy_self()
     pcall(lock.update)   -- the lockfile now records exactly what is checked out
   end
