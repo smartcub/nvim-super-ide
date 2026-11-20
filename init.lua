@@ -2584,6 +2584,23 @@ local function float_term(cmd, title, on_exit)
     row = math.floor((vim.o.lines - h) / 2), col = math.floor((vim.o.columns - w) / 2),
     border = "rounded", title = " " .. title .. " ", title_pos = "center",
   })
+  -- When the terminal's buffer goes away (the key Neovim closes an ended
+  -- terminal with), the float must go too. Neovim keeps a window open if the
+  -- buffer was the last one in the buffer list (the start screen and this
+  -- float are both unlisted) and gives it a new empty buffer instead; that
+  -- window is closed here and the empty buffer dropped.
+  vim.api.nvim_create_autocmd("BufWipeout", { buffer = buf, once = true, callback = function()
+    vim.schedule(function()
+      if not vim.api.nvim_win_is_valid(win) then return end
+      local left = vim.api.nvim_win_get_buf(win)
+      pcall(vim.api.nvim_win_close, win, true)
+      if left ~= buf and vim.api.nvim_buf_is_valid(left) and vim.api.nvim_buf_get_name(left) == ""
+        and not vim.bo[left].modified and vim.api.nvim_buf_line_count(left) == 1
+        and vim.api.nvim_buf_get_lines(left, 0, 1, false)[1] == "" and #vim.fn.win_findbuf(left) == 0 then
+        pcall(vim.api.nvim_buf_delete, left, { force = true })
+      end
+    end)
+  end })
   -- jobstart with term = true runs cmd in a terminal inside the current
   -- buffer (the float), so prompts such as sudo's password work there.
   vim.fn.jobstart(cmd, {
