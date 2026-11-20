@@ -17,7 +17,7 @@ for c in range(2,SW-2): put(n-1,c,'_',UP,True)
 # Set VERSION (with the leading v); it is centred automatically. VER matches the start screen.
 # Texts overwrite grid cells and never move the lines; like the start screen, a text that
 # does not fit with one blank on each side is left out.
-VERSION,VER="v1.0.2","#2aa198"
+VERSION,VER="v1.0.3","#2aa198"
 for row,s,col,b in((7,"Neovim",TX,True),(8,"Super IDE",TX,True),(9,VERSION,VER,False)):
     start=c0-(len(s)-1)//2
     if any(g[row][c+OFF] is not None for c in range(start-1,start+len(s)+1)): continue

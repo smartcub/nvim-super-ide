@@ -150,8 +150,8 @@ end
 -- :IDEUpdate uses it to find what you changed since, and moves it on.
 -- @@LOCK BEGIN
 local LOCK = {
-  release = "1.0.2",
-  pinned = "2026-11-19",
+  release = "1.0.3",
+  pinned = "2026-11-20",
   neovim = "v0.12.6",
   plugins = {
     ["LuaSnip"] = { branch = "master", commit = "642b0c595e11608b4c18219e93b88d7637af27bc" },
